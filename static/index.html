@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Smart Money Radar</title>
+<title>Smart Money & Pump Radar</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -15,7 +15,7 @@
     --ink-dim: #6E869C;
     --signal: #F2A93B;
     --teal: #2DD4BF;
-    --danger: #E85D5D;
+    --pump: #38BDF8;
   }
 
   * { box-sizing: border-box; }
@@ -105,6 +105,7 @@
     border-bottom: 1px solid var(--line);
     text-decoration: none;
     color: inherit;
+    transition: background 0.2s;
   }
 
   .row:hover { background: var(--bg-raised); }
@@ -124,10 +125,36 @@
 
   .mid { min-width: 0; }
 
+  .symbol-area {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
   .symbol {
     font-size: 15px;
     font-weight: 600;
-    margin-bottom: 4px;
+  }
+
+  .badge-pump {
+    background: rgba(56, 189, 248, 0.15);
+    color: var(--pump);
+    font-size: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+  }
+
+  .badge-whale {
+    background: rgba(242, 169, 59, 0.15);
+    color: var(--signal);
+    font-size: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(242, 169, 59, 0.3);
   }
 
   .meta {
@@ -145,9 +172,16 @@
 
   .usd-value {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--signal);
+  }
+
+  .pump-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--pump);
   }
 
   .time {
@@ -170,7 +204,7 @@
 
 <header>
   <div class="title-row">
-    <h1><span class="pulse"></span>Smart Money <span class="accent">Radar</span></h1>
+    <h1><span class="pulse"></span>Smart Money & Pump <span class="accent">Radar</span></h1>
   </div>
   <div class="stats" id="stats">
     <span>عملات مفحوصة: <b id="stat-scanned">—</b></span>
@@ -183,7 +217,7 @@
   <div id="feed"></div>
 </main>
 
-<footer>يتحدث تلقائياً كل 10 ثواني</footer>
+<footer>يتحدث تلقائياً كل 5 ثوانٍ</footer>
 
 <script>
 function timeAgo(isoString) {
@@ -207,37 +241,48 @@ async function refresh() {
 
     if (!data.alerts || data.alerts.length === 0) {
       feed.innerHTML = `<div class="empty">
-        الرادار شغال ويفحص العملات...<br>
-        أول صفقة ذكية تنكشف بتظهر هنا مباشرة.
+        الرادار شغال ويفحص العملات ويراقب البمب...<br>
+        أول إشارة صعود أو صفقة حوت بتظهر هنا مباشرة.
       </div>`;
       return;
     }
 
-    feed.innerHTML = data.alerts.map(a => `
-      <a class="row" href="${a.url || '#'}" target="_blank" rel="noopener">
-        <span class="chain-tag">${a.chain}</span>
-        <div class="mid">
-          <div class="symbol">${a.symbol}</div>
-          <div class="meta">
-            <span>سعر ${a.price}</span>
-            <span>MC $${a.mcap}</span>
-            <span>Liq $${a.liquidity}</span>
-            <span>${a.wallet}</span>
+    feed.innerHTML = data.alerts.map(a => {
+      const isPump = a.type === 'pump';
+      const badge = isPump ? `<span class="badge-pump">🚀 PUMP +${a.change_pct}%</span>` : `<span class="badge-whale">🐳 WHALE</span>`;
+      const rightContent = isPump 
+        ? `<div class="pump-value">🚀 +${a.change_pct}%</div>`
+        : `<div class="usd-value">$${Number(a.usd_value).toLocaleString()}</div>`;
+
+      return `
+        <a class="row" href="${a.url || '#'}" target="_blank" rel="noopener">
+          <span class="chain-tag">${a.chain}</span>
+          <div class="mid">
+            <div class="symbol-area">
+              <span class="symbol">${a.symbol}</span>
+              ${badge}
+            </div>
+            <div class="meta">
+              <span>السعر $${a.price}</span>
+              <span>MC $${a.mcap}</span>
+              <span>Liq $${a.liquidity}</span>
+              ${a.wallet ? `<span>المحفظة: ${a.wallet}</span>` : ''}
+            </div>
           </div>
-        </div>
-        <div class="right">
-          <div class="usd-value">$${a.usd_value.toLocaleString()}</div>
-          <div class="time">${timeAgo(a.time)}</div>
-        </div>
-      </a>
-    `).join('');
+          <div class="right">
+            ${rightContent}
+            <div class="time">${timeAgo(a.time)}</div>
+          </div>
+        </a>
+      `;
+    }).join('');
   } catch (e) {
     console.error('تعذر تحديث البيانات', e);
   }
 }
 
 refresh();
-setInterval(refresh, 10000);
+setInterval(refresh, 5000);
 </script>
 
 </body>
