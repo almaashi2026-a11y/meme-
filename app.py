@@ -1,6 +1,6 @@
 """
-Live Real-Time Market Feed Tracker - Instant Accumulation
-رصد حي ومباشر لأحدث الأزواج والتجميع اللحظي بدون تأخير.
+Meme Coins Multi-Wallet Accumulation Tracker
+رصد واصتياد تجميع الميمز والشراء القوي من محافظ متعددة
 """
 
 import asyncio
@@ -14,20 +14,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ الإعدادات المباشرة ============
+# ============ إعدادات ميمز ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط مرنة جداً لضمان ظهور العملات الحية مباشرة على الداشبورد
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 2000))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 1000))
+# شروط مخصصة للميمز الباحثة عن الانفجار
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1500))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 800))
 
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 5))
 MAX_ALERTS_STORED = 300
 ALERT_COOLDOWN_SECONDS = 60
 
-app = FastAPI(title="Live Real-Time Market Feed Tracker")
+app = FastAPI(title="Meme Coins Accumulation Tracker")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -48,19 +48,16 @@ def send_telegram_alert(message: str):
         pass
 
 
-def get_live_market_pairs():
-    """جلب أحدث أزواج التداول الحية مباشرة من السوق"""
+def get_meme_market_pairs():
+    """البحث المباشر واستخراج أزواج وحركات الميمز الحية"""
     pairs_list = []
-    # نعتمد على البحث العام أو الروابط المباشرة لأحدث الأزواج النشطة
-    urls = [
-        "https://api.dexscreener.com/latest/dex/search?q=SOL",
-        "https://api.dexscreener.com/latest/dex/search?q=ETH",
-        "https://api.dexscreener.com/latest/dex/search?q=USDT"
-    ]
+    # استعلامات بحث تركز على منصات وشبكات الميمز الشهيرة (مثل Pump.fun, Solana, Base, ETH)
+    queries = ["pump", "meme", "doge", "pepe", "cat", "SOL", "BASE"]
     
-    for url in urls:
+    for q in queries:
+        url = f"https://api.dexscreener.com/latest/dex/search?q={q}"
         try:
-            r = requests.get(url, timeout=8)
+            r = requests.get(url, timeout=6)
             if r.status_code == 200:
                 data = r.json()
                 items = data.get("pairs", [])
@@ -69,7 +66,7 @@ def get_live_market_pairs():
         except Exception:
             pass
 
-    # تصفية الأزواج المتكررة حسب العنوان
+    # فلترة المتكرر
     seen, unique = set(), []
     for p in pairs_list:
         base_addr = p.get("baseToken", {}).get("address")
@@ -80,13 +77,17 @@ def get_live_market_pairs():
     return unique
 
 
-def analyze_and_push(pair):
+def analyze_meme_accumulation(pair):
     if not pair:
         return
 
     chain_id = pair.get("chainId", "unknown")
     token_address = pair.get("baseToken", {}).get("address", "")
     if not token_address:
+        return
+
+    # التأكد أن الزوج يخص شبكات حركة الميمز الشهيرة
+    if chain_id not in ["solana", "base", "ethereum", "bsc"]:
         return
 
     liq = float(pair.get("liquidity", {}).get("usd", 0) or 0)
@@ -101,8 +102,10 @@ def analyze_and_push(pair):
     h1_buys = txns.get("buys", {}).get("h1", 0) or 0
     h1_sells = txns.get("sells", {}).get("h1", 0) or 0
 
-    # شرط تجميع ومشترين نشطين
-    if h1_buys < h1_sells and h1_buys < 3:
+    # شروط التجميع القوي واحتفاظ الحيتان (عمليات شراء أعلى بوضوح من البيع)
+    is_meme_accumulation = (h1_buys >= h1_sells * 1.3) and (h1_buys >= 4)
+
+    if not is_meme_accumulation:
         return
 
     now = time.time()
@@ -111,15 +114,17 @@ def analyze_and_push(pair):
     last_alert_time[token_address] = now
 
     symbol = pair.get("baseToken", {}).get("symbol", "?")
+    name = pair.get("baseToken", {}).get("name", "Meme Coin")
     price = pair.get("priceUsd", "?")
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
 
     entry = {
-        "type": "live_accumulation",
+        "type": "meme_accumulation",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
+        "name": name,
         "token_address": token_address,
         "price": price,
         "mcap": mcap,
@@ -128,19 +133,19 @@ def analyze_and_push(pair):
         "buys": h1_buys,
         "sells": h1_sells,
         "url": pair_url,
-        "safety": f"🛡️ سيولة (${liq:,.0f})",
+        "safety": f"🐸 ميم آمن (${liq:,.0f})",
         "strength": float(h1_vol)
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
     msg = (
-        f"⚡ *Live Accumulation* [{chain_id.upper()}]\n"
-        f"العملة: *{symbol}*\n"
+        f"🐸 *تجميع ميم قوي* [{chain_id.upper()}]\n"
+        f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
-        f"شراء/بيع (1h): {h1_buys} / {h1_sells}\n"
-        f"الحجم: ${h1_vol:,.0f} | السعر: ${price}\n"
-        f"Liquidity: ${liq:,.0f}\n"
+        f"شراء/بيع (1h): {h1_buys} شراﺀ / {h1_sells} بيع\n"
+        f"حجم التداول: ${h1_vol:,.0f} | الماركت كاب: ${mcap}\n"
+        f"السيولة: ${liq:,.0f}\n"
         f"{pair_url}"
     )
     send_telegram_alert(msg)
@@ -148,10 +153,10 @@ def analyze_and_push(pair):
 
 async def scanner_loop():
     while True:
-        pairs = await asyncio.to_thread(get_live_market_pairs)
+        pairs = await asyncio.to_thread(get_meme_market_pairs)
         if pairs:
             for p in pairs:
-                await asyncio.to_thread(analyze_and_push, p)
+                await asyncio.to_thread(analyze_meme_accumulation, p)
                 stats["scanned_tokens"] += 1
             
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
