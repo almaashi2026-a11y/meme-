@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Money Radar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0B1521;
+    --bg-raised: #101E2E;
+    --line: #1D3044;
+    --ink: #DCE7F0;
+    --ink-dim: #6E869C;
+    --signal: #F2A93B;
+    --teal: #2DD4BF;
+    --danger: #E85D5D;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    background-image:
+      radial-gradient(circle at 15% 0%, rgba(45,212,191,0.06), transparent 40%),
+      radial-gradient(circle at 85% 20%, rgba(242,169,59,0.05), transparent 45%);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans Arabic', sans-serif;
+    min-height: 100vh;
+  }
+
+  header {
+    padding: 28px 20px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .title-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.2px;
+  }
+
+  h1 .accent { color: var(--signal); }
+
+  .pulse {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--teal);
+    margin-left: 8px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(45,212,191,0.5); }
+    50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(45,212,191,0); }
+  }
+
+  .stats {
+    display: flex;
+    gap: 22px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--ink-dim);
+    max-width: 900px;
+    margin: 14px auto 0;
+  }
+
+  .stats b { color: var(--ink); font-weight: 500; }
+
+  main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 10px 20px 60px;
+  }
+
+  .empty {
+    text-align: center;
+    color: var(--ink-dim);
+    padding: 80px 20px;
+    font-size: 14px;
+    line-height: 1.9;
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    gap: 16px;
+    align-items: center;
+    padding: 16px 4px;
+    border-bottom: 1px solid var(--line);
+    text-decoration: none;
+    color: inherit;
+  }
+
+  .row:hover { background: var(--bg-raised); }
+
+  .chain-tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--teal);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 3px 7px;
+    text-align: center;
+    text-transform: lowercase;
+    justify-self: start;
+  }
+
+  .mid { min-width: 0; }
+
+  .symbol {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-dim);
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .right {
+    text-align: left;
+  }
+
+  .usd-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--signal);
+  }
+
+  .time {
+    font-size: 11px;
+    color: var(--ink-dim);
+    margin-top: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  footer {
+    text-align: center;
+    color: var(--ink-dim);
+    font-size: 12px;
+    padding: 20px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-row">
+    <h1><span class="pulse"></span>Smart Money <span class="accent">Radar</span></h1>
+  </div>
+  <div class="stats" id="stats">
+    <span>عملات مفحوصة: <b id="stat-scanned">—</b></span>
+    <span>تنبيهات: <b id="stat-total">—</b></span>
+    <span>آخر مسح: <b id="stat-last">—</b></span>
+  </div>
+</header>
+
+<main>
+  <div id="feed"></div>
+</main>
+
+<footer>يتحدث تلقائياً كل 10 ثواني</footer>
+
+<script>
+function timeAgo(isoString) {
+  const diff = (Date.now() - new Date(isoString).getTime()) / 1000;
+  if (diff < 60) return `قبل ${Math.floor(diff)} ث`;
+  if (diff < 3600) return `قبل ${Math.floor(diff / 60)} د`;
+  return `قبل ${Math.floor(diff / 3600)} س`;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/alerts');
+    const data = await res.json();
+
+    document.getElementById('stat-scanned').textContent = data.stats.scanned_tokens ?? '—';
+    document.getElementById('stat-total').textContent = data.stats.alerts_total ?? '—';
+    document.getElementById('stat-last').textContent = data.stats.last_scan
+      ? timeAgo(data.stats.last_scan) : '—';
+
+    const feed = document.getElementById('feed');
+
+    if (!data.alerts || data.alerts.length === 0) {
+      feed.innerHTML = `<div class="empty">
+        الرادار شغال ويفحص العملات...<br>
+        أول صفقة ذكية تنكشف بتظهر هنا مباشرة.
+      </div>`;
+      return;
+    }
+
+    feed.innerHTML = data.alerts.map(a => `
+      <a class="row" href="${a.url || '#'}" target="_blank" rel="noopener">
+        <span class="chain-tag">${a.chain}</span>
+        <div class="mid">
+          <div class="symbol">${a.symbol}</div>
+          <div class="meta">
+            <span>سعر ${a.price}</span>
+            <span>MC $${a.mcap}</span>
+            <span>Liq $${a.liquidity}</span>
+            <span>${a.wallet}</span>
+          </div>
+        </div>
+        <div class="right">
+          <div class="usd-value">$${a.usd_value.toLocaleString()}</div>
+          <div class="time">${timeAgo(a.time)}</div>
+        </div>
+      </a>
+    `).join('');
+  } catch (e) {
+    console.error('تعذر تحديث البيانات', e);
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+
+</body>
+</html>
