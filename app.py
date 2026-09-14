@@ -139,7 +139,7 @@ def record_alert(chain_id, token_address, wallet, pair_data, usd_value):
     if not pair_data:
         return
     
-    # فحص الحد الأدنى للسيولة لتجنب العملات الوهيمة
+    # فحص الحد الأدنى للسيولة لتجنب العملات الوهمية
     liq = float(pair_data.get("liquidity", {}).get("usd", 0) or 0)
     if liq < MIN_LIQUIDITY_USD:
         return
@@ -348,18 +348,20 @@ async def scanner_loop():
             chain_type = normalize_chain_type(chain_id)
             if not chain_type:
                 continue
-            pair_data = await asyncio.to_thread(get_pair_data, chain_id, token_address)
-            await asyncio.to_thread(check_pump, chain_id, token_address, pair_data)
-            if chain_type == "solana":
-                await asyncio.to_thread(check_solana_token, token_address, pair_data)
-            elif chain_type == "evm":
-                await asyncio.to_thread(check_evm_token, chain_id, token_address, pair_data)
-            elif chain_type == "tron":
-                await asyncio.to_thread(check_tron_token, token_address, pair_data)
-            stats["scanned_tokens"] += 1
             
-            # فاصل زمني لتجنب الضغط على الـ API ومنع خطأ 429
-            await asyncio.sleep(0.4)
+            pair_data = await asyncio.to_thread(get_pair_data, chain_id, token_address)
+            if pair_data:
+                await asyncio.to_thread(check_pump, chain_id, token_address, pair_data)
+                if chain_type == "solana":
+                    await asyncio.to_thread(check_solana_token, token_address, pair_data)
+                elif chain_type == "evm":
+                    await asyncio.to_thread(check_evm_token, chain_id, token_address, pair_data)
+                elif chain_type == "tron":
+                    await asyncio.to_thread(check_tron_token, token_address, pair_data)
+                stats["scanned_tokens"] += 1
+            
+            # زيادة الفاصل الزمني إلى 1.2 ثانية لتجنب أخطاء 429 تماماً
+            await asyncio.sleep(1.2)
 
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
         await asyncio.sleep(TX_POLL_SECONDS)
