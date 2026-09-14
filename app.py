@@ -346,6 +346,9 @@ async def scanner_loop():
             elif chain_type == "tron":
                 await asyncio.to_thread(check_tron_token, token_address, pair_data)
             stats["scanned_tokens"] += 1
+            
+            # فاصل زمني لتجنب الضغط على الـ API ومنع خطأ 429
+            await asyncio.sleep(0.4)
 
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
         await asyncio.sleep(TX_POLL_SECONDS)
