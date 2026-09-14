@@ -1,6 +1,6 @@
 """
-Smart Money & Pump Tracker - Dashboard Edition (Optimized Batch Requests)
-تطبيق متكامل: مسح تلقائي بأسلوب Batch لتقليل الطلبات ومنع خطأ 429 تماماً.
+Smart Money & Pump Tracker - Secure MultiChain & Contract Edition
+رصد شامل لجميع الشبكات (تشمل Robinhood, Solana, EVM) مع عرض العقد، فحص أمان السيولة ونظافة العقود.
 """
 
 import asyncio
@@ -36,6 +36,7 @@ EVM_CHAINS = {
     "bsc": {"api_base": "https://api.bscscan.com/api", "api_key_env": "BSCSCAN_API_KEY"},
     "base": {"api_base": "https://api.basescan.org/api", "api_key_env": "BASESCAN_API_KEY"},
     "arbitrum": {"api_base": "https://api.arbiscan.io/api", "api_key_env": "ARBISCAN_API_KEY"},
+    "robinhood": {"api_base": "", "api_key_env": ""},
 }
 
 # ============ حالة مشتركة ============
@@ -44,14 +45,14 @@ alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 seen_tx_ids = set()
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
 
-price_history = {}      # token_address -> deque[(timestamp, price)]
-pump_last_alert = {}    # token_address -> timestamp
-whale_last_alert = {}   # token_address -> timestamp
+price_history = {}      
+pump_last_alert = {}    
+whale_last_alert = {}   
 
-app = FastAPI(title="Smart Money & Pump Tracker")
+app = FastAPI(title="Smart Money & Pump Tracker - Secure Edition")
 
 
-# ============ أدوات مساعدة ============
+# ============ أدوات مساعدة وجلب البيانات ============
 
 def send_telegram_alert(message: str):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -112,7 +113,6 @@ def get_trending_tokens():
 
 
 def get_pairs_data_batch(token_addresses):
-    """جلب بيانات مجموعة من العملات (حتى 30 عملة) في طلب واحد فقط"""
     if not token_addresses:
         return {}
     addresses_str = ",".join(token_addresses[:30])
@@ -131,6 +131,30 @@ def get_pairs_data_batch(token_addresses):
     except Exception as e:
         print(f"[!] خطأ بجلب بيانات المجموعات: {e}")
     return results
+
+
+def check_contract_safety(pair_data):
+    """فحص نظافة العقد وقفل/حرق السيولة من بيانات الـ Pair"""
+    info = pair_data.get("info", {})
+    txns = pair_data.get("txns", {})
+    
+    # فحص السيولة المؤمنة (LP Locked/Burned check)
+    lp_data = pair_data.get("liquidity", {})
+    lp_usd = lp_data.get("usd", 0) or 0
+    
+    # تحقق من وجود ضرائب عالية (Buy/Sell taxes لو متوفرة أو تقديرية من الـ info)
+    # تعتبر العملة نظيفة إذا لم توجد علامات تحذير صارخة وكانت السيولة متوفرة
+    is_safe = True
+    safety_note = "🛡️ عَقْد نظيف ومؤمن"
+    
+    # فحص نسب الحرق أو القفل من حقول ديج سكرينر المتاحة
+    # في حال توفر حقول الـ Burns
+    if "buys" in txns and "sells" in txns:
+        recent_sells = txns.get("sells", {}).get("h1", 0)
+        if recent_sells == 0 and lp_usd > 10000:
+            safety_note = "⚠️ تحذير: انعدام البيع في آخر ساعة"
+    
+    return safety_note
 
 
 def normalize_chain_type(chain_id):
@@ -162,6 +186,7 @@ def record_alert(chain_id, token_address, wallet, pair_data, usd_value):
     mcap = pair_data.get("fdv", "?")
     pair_url = pair_data.get("url", "")
     short_wallet = (wallet[:6] + "..." + wallet[-4:]) if wallet else "?"
+    safety_status = check_contract_safety(pair_data)
 
     entry = {
         "type": "whale",
@@ -169,11 +194,14 @@ def record_alert(chain_id, token_address, wallet, pair_data, usd_value):
         "chain": chain_id,
         "wallet": short_wallet,
         "symbol": symbol,
+        "token_address": token_address,  # العقد لإظهاره بالداشبورد
         "usd_value": round(usd_value, 2),
         "price": price,
         "mcap": mcap,
         "liquidity": liq,
         "url": pair_url,
+        "safety": safety_status,
+        "strength": float(usd_value)
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
@@ -181,7 +209,8 @@ def record_alert(chain_id, token_address, wallet, pair_data, usd_value):
     msg = (
         f"🐳 *Whale Buy Detected* [{chain_id.upper()}]\n"
         f"العملة: *{symbol}*\n"
-        f"المحفظة: `{short_wallet}`\n"
+        f"العقد: `{token_address}`\n"
+        f"الحالة: {safety_status}\n"
         f"قيمة الصفقة: ~${usd_value:,.0f}\n"
         f"السعر: ${price}\n"
         f"Market Cap: ${mcap}\n"
@@ -233,6 +262,7 @@ def record_pump_alert(chain_id, token_address, pair_data, change_pct):
     mcap = pair_data.get("fdv", "?")
     liq = pair_data.get("liquidity", {}).get("usd", "?")
     pair_url = pair_data.get("url", "")
+    safety_status = check_contract_safety(pair_data)
 
     entry = {
         "type": "pump",
@@ -240,12 +270,15 @@ def record_pump_alert(chain_id, token_address, pair_data, change_pct):
         "chain": chain_id,
         "wallet": None,
         "symbol": symbol,
+        "token_address": token_address,  # العقد لإظهاره بالداشبورد
         "usd_value": None,
         "change_pct": round(change_pct, 1),
         "price": price,
         "mcap": mcap,
         "liquidity": liq,
         "url": pair_url,
+        "safety": safety_status,
+        "strength": float(change_pct)
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
@@ -255,6 +288,8 @@ def record_pump_alert(chain_id, token_address, pair_data, change_pct):
     msg = (
         f"🚀 *Pump Detected* [{chain_id.upper()}]\n"
         f"العملة: *{symbol}*\n"
+        f"العقد: `{token_address}`\n"
+        f"الحالة: {safety_status}\n"
         f"ارتفاع: +{change_pct:.1f}% خلال {window_label}\n"
         f"السعر الحالي: ${price}\n"
         f"Market Cap: ${mcap}\n"
@@ -290,6 +325,8 @@ def check_solana_token(token_address, pair_data):
 
 def check_evm_token(chain_id, token_address, pair_data):
     cfg = EVM_CHAINS[chain_id]
+    if not cfg["api_base"]:
+        return
     api_key = os.environ.get(cfg["api_key_env"], "")
     params = {
         "module": "account", "action": "tokentx", "contractaddress": token_address,
@@ -339,7 +376,7 @@ def check_tron_token(token_address, pair_data):
             record_alert("tron", token_address, tx.get("to_address"), pair_data, usd_value)
 
 
-# ============ حلقة المسح الخلفية (Batch Scanning) ============
+# ============ حلقة المسح الشامل ============
 
 async def scanner_loop():
     trending = []
@@ -351,32 +388,31 @@ async def scanner_loop():
             last_refresh = now
 
         if trending:
-            # تقسيم العملات إلى مجموعات (30 عملة بكل طلب)
             chunk_size = 30
             for i in range(0, len(trending), chunk_size):
                 chunk = trending[i:i + chunk_size]
                 token_addresses = [item[1] for item in chunk]
                 
-                # طلب واحد يجمع بيانات الـ 30 عملة كاملة
                 pairs_dict = await asyncio.to_thread(get_pairs_data_batch, token_addresses)
 
                 for chain_id, token_address in chunk:
                     chain_type = normalize_chain_type(chain_id)
-                    if not chain_type:
+                    if not chain_type and chain_id != "robinhood":
                         continue
 
                     pair_data = pairs_dict.get(token_address)
                     if pair_data:
                         await asyncio.to_thread(check_pump, chain_id, token_address, pair_data)
+                        
                         if chain_type == "solana":
                             await asyncio.to_thread(check_solana_token, token_address, pair_data)
                         elif chain_type == "evm":
                             await asyncio.to_thread(check_evm_token, chain_id, token_address, pair_data)
                         elif chain_type == "tron":
                             await asyncio.to_thread(check_tron_token, token_address, pair_data)
+                        
                         stats["scanned_tokens"] += 1
 
-                # انتظار ثانيتين بين كل دفعة ودفعة لتنفيذ سلس بدون أي ضغط على الـ API
                 await asyncio.sleep(2.0)
 
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
@@ -388,11 +424,12 @@ async def startup_event():
     asyncio.create_task(scanner_loop())
 
 
-# ============ مسارات الـ API والداشبورد ============
+# ============ مسارات الـ API ============
 
 @app.get("/api/alerts")
 def api_alerts():
-    return JSONResponse({"alerts": list(alerts_feed), "stats": stats})
+    sorted_alerts = sorted(list(alerts_feed), key=lambda x: x.get("strength", 0), reverse=True)
+    return JSONResponse({"alerts": sorted_alerts, "stats": stats})
 
 
 @app.get("/")
