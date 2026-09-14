@@ -1,6 +1,6 @@
 """
-Secure Meme Multi-Wallet Accumulation & Locked LP Tracker
-رصد ميمز التجميع الآمن مع فحص قفل السيولة وحماية العقود
+Smart Meme Accumulation & Early Breakout Tracker
+رصد واصتياد بدايات البمب وتجميع الحيتان مع قفل السيولة
 """
 
 import asyncio
@@ -14,20 +14,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ إعدادات الأمان والميمز ============
+# ============ إعدادات الرادار الذكي ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط سيولة آمنة تضمن القدرة على البيع والخروج بسلاسة
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 3000))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 1500))
+# شروط مدروسة لدخول بداية البمب بطلب سيولة آمنة
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 2500))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 1000))
 
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 10))
 MAX_ALERTS_STORED = 300
-ALERT_COOLDOWN_SECONDS = 60
+ALERT_COOLDOWN_SECONDS = 45
 
-app = FastAPI(title="Secure Meme Accumulation & LP Tracker")
+app = FastAPI(title="Smart Meme Early Breakout Tracker")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -73,7 +73,7 @@ def get_latest_meme_addresses():
             seen.add(entry)
             unique.append(entry)
             
-    return unique[:45]
+    return unique[:50]
 
 
 def get_pairs_batch(token_addresses):
@@ -97,24 +97,20 @@ def get_pairs_batch(token_addresses):
     return results
 
 
-def check_lp_safety_and_lock(pair):
-    """فحص حالة السيولة وقفلها للتأكد من أمان العقد"""
-    liquidity_info = pair.get("liquidity", {})
-    lp_usd = liquidity_info.get("usd", 0) or 0
-    
-    # فحص خيارات قفل السيولة المتاحة في بيانات الزوج
-    pair_labels = pair.get("labels", [])
-    is_locked = any("locked" in str(label).lower() for label in pair_labels)
-    
-    if is_locked or lp_usd >= 15000:
-        return "🔒 سيولة مقفولة ومؤمنة (آمن جداً)", True
-    elif lp_usd >= MIN_LIQUIDITY_USD:
-        return "🛡️ سيولة مقبولة ونظيفة", True
-    
-    return "⚠️ تحذير: السيولة منخفضة أو غير مؤكدة", False
+def verify_liquidity_and_safety(pair):
+    """التحقق من أمان السيولة والعقد"""
+    liq_usd = pair.get("liquidity", {}).get("usd", 0) or 0
+    labels = pair.get("labels", [])
+    is_locked = any("locked" in str(l).lower() for l in labels)
+
+    if is_locked or liq_usd >= 10000:
+        return "🔒 سيولة مقفولة ومحمية (آمن جداً)", True
+    elif liq_usd >= MIN_LIQUIDITY_USD:
+        return "🛡️ سيولة جيدة ونظيفة", True
+    return "⚠️ تحذير سيولة", False
 
 
-def analyze_secure_meme(chain_id, token_address, pair):
+def analyze_early_breakout(chain_id, token_address, pair):
     if not pair:
         return
 
@@ -125,8 +121,7 @@ def analyze_secure_meme(chain_id, token_address, pair):
     if h1_vol < MIN_VOLUME_USD:
         return
 
-    # فحص الأمان وقفل السيولة
-    safety_status, is_safe = check_lp_safety_and_lock(pair)
+    safety_text, is_safe = verify_liquidity_and_safety(pair)
     if not is_safe:
         return
 
@@ -134,9 +129,9 @@ def analyze_secure_meme(chain_id, token_address, pair):
     h1_buys = txns.get("buys", {}).get("h1", 0) or 0
     h1_sells = txns.get("sells", {}).get("h1", 0) or 0
 
-    # شروط تجميع حقيقي من محافظ متعددة (الشراء أعلى بوضوح من البيع)
-    is_accumulation = (h1_buys >= h1_sells * 1.4) and (h1_buys >= 3)
-    if not is_accumulation:
+    # شرط بداية البمب: نشاط شراء قوي واكتساح لعمليات البيع
+    is_breakout = (h1_buys >= h1_sells * 1.5) and (h1_buys >= 4)
+    if not is_breakout:
         return
 
     now = time.time()
@@ -152,7 +147,7 @@ def analyze_secure_meme(chain_id, token_address, pair):
     pair_url = pair.get("url", "")
 
     entry = {
-        "type": "secure_meme_accumulation",
+        "type": "early_breakout",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -165,18 +160,18 @@ def analyze_secure_meme(chain_id, token_address, pair):
         "buys": h1_buys,
         "sells": h1_sells,
         "url": pair_url,
-        "safety": safety_status,
+        "safety": safety_text,
         "strength": float(h1_vol)
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
     msg = (
-        f"🔒 *تجميع ميم آمن ومقفول السيولة* [{chain_id.upper()}]\n"
+        f"⚡ *رصد بداية بمب جديد* [{chain_id.upper()}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
-        f"حالة الأمان: {safety_status}\n"
-        f"شراء/بيع (1h): {h1_buys} / {h1_sells}\n"
+        f"الأمان: {safety_text}\n"
+        f"شراء/بيع (1h): {h1_buys} شراﺀ / {h1_sells} بيع\n"
         f"الحجم: ${h1_vol:,.0f} | السيولة: ${liq_usd:,.0f}\n"
         f"السعر: ${price}\n"
         f"{pair_url}"
@@ -194,7 +189,7 @@ async def scanner_loop():
             for chain_id, token_address in token_entries:
                 pair = pairs_dict.get(token_address)
                 if pair:
-                    await asyncio.to_thread(analyze_secure_meme, chain_id, token_address, pair)
+                    await asyncio.to_thread(analyze_early_breakout, chain_id, token_address, pair)
                     stats["scanned_tokens"] += 1
 
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
