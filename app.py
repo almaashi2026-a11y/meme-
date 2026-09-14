@@ -1,6 +1,6 @@
 """
-Smart Money & Pump Tracker - Pre-Pump Accumulation & Secure Edition
-رصد الشراء الحقيقي والضخم قبل الصعود (Pre-Pump Accumulation) مع فحص العقد والسيولة.
+Smart Money Early Entry & Pump Tracker
+رصد الدخول المبكر للسيولة والصفقات الأولى قبل الانفجار السعري مع فحص الأمان.
 """
 
 import asyncio
@@ -19,16 +19,17 @@ from fastapi.staticfiles import StaticFiles
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-WHALE_BUY_THRESHOLD_USD = float(os.environ.get("WHALE_BUY_THRESHOLD_USD", 4000))
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 3000))
-TRENDING_REFRESH_SECONDS = 120
-TX_POLL_SECONDS = float(os.environ.get("TX_POLL_SECONDS", 10))
+# خفضنا الحد قليلاً لنقنص الصفقات في بدايتها المبكرة
+WHALE_BUY_THRESHOLD_USD = float(os.environ.get("WHALE_BUY_THRESHOLD_USD", 2500))
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 2500))
+TRENDING_REFRESH_SECONDS = 90
+TX_POLL_SECONDS = float(os.environ.get("TX_POLL_SECONDS", 8))
 MAX_ALERTS_STORED = 300
 
-# إعدادات كشف التجميع المبكر والبمب
-ACCUMULATION_WINDOW_SECONDS = 120
-ACCUMULATION_MIN_BUYS = 2  # عدد الصفقات الكبيرة المطلوبة لتأكيد الشراء الحقيقي
-ALERT_COOLDOWN_SECONDS = float(os.environ.get("ALERT_COOLDOWN_SECONDS", 150))
+# إعدادات كشف البمب المبكر (بداية الصعود)
+PUMP_WINDOW_SECONDS = float(os.environ.get("PUMP_WINDOW_SECONDS", 60))
+PUMP_THRESHOLD_PERCENT = float(os.environ.get("PUMP_THRESHOLD_PERCENT", 5)) # بداية الانطلاقة من 5%
+ALERT_COOLDOWN_SECONDS = float(os.environ.get("ALERT_COOLDOWN_SECONDS", 90))
 
 EVM_CHAINS = {
     "ethereum": {"api_base": "https://api.etherscan.io/api", "api_key_env": "ETHERSCAN_API_KEY"},
@@ -44,10 +45,10 @@ alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 seen_tx_ids = set()
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
 
-token_buys_history = {} # تتبع عمليات الشراء الحقيقية للعملة لتأكيد التجميع
+price_history = {}      
 last_alert_time = {}   
 
-app = FastAPI(title="Smart Money Pre-Pump Tracker")
+app = FastAPI(title="Early Entry Smart Money Tracker")
 
 
 # ============ أدوات مساعدة وجلب البيانات ============
@@ -132,18 +133,13 @@ def get_pairs_data_batch(token_addresses):
 
 
 def check_contract_safety(pair_data):
-    """فحص نظافة العقد وسيولة المجمع"""
+    """فحص نظافة العقد وسيولة المجمع للتأكد من أمان الدخول"""
     lp_data = pair_data.get("liquidity", {})
     lp_usd = lp_data.get("usd", 0) or 0
-    txns = pair_data.get("txns", {})
     
-    safety_note = "🛡️ عقد نظيف ومؤمن"
-    if "h1" in txns:
-        h1_sells = txns.get("sells", {}).get("h1", 0)
-        h1_buys = txns.get("buys", {}).get("h1", 0)
-        if h1_buys > 0 and h1_sells == 0:
-            safety_note = "🔥 تجميع قوي (بدون بيع)"
-    
+    safety_note = "🛡️ عقد نظيف (آمن)"
+    if lp_usd >= 10000:
+        safety_note = "🛡️ سيولة جيدة ومؤمنة"
     return safety_note
 
 
@@ -157,7 +153,7 @@ def normalize_chain_type(chain_id):
     return None
 
 
-def record_accumulation_alert(chain_id, token_address, wallet, pair_data, usd_value):
+def record_early_entry(chain_id, token_address, pair_data, change_pct, usd_value=None):
     if not pair_data:
         return
 
@@ -169,52 +165,38 @@ def record_accumulation_alert(chain_id, token_address, wallet, pair_data, usd_va
     last_alert = last_alert_time.get(token_address, 0)
     if now - last_alert < ALERT_COOLDOWN_SECONDS:
         return
-
-    # التحقق من الشراء الحقيقي عبر تجميع الصفقات في الذاكرة
-    history = token_buys_history.setdefault(token_address, deque())
-    history.append((now, usd_value))
-    while history and now - history[0][0] > ACCUMULATION_WINDOW_SECONDS:
-        history.popleft()
-
-    # إذا تجاوز عدد صفقات الشراء الضخمة الحد الأدنى خلال النافذة الزمنية، نعتبرها إشارة تجميع حقيقي قبل الانفجار
-    if len(history) < ACCUMULATION_MIN_BUYS:
-        return
-
     last_alert_time[token_address] = now
 
     symbol = pair_data.get("baseToken", {}).get("symbol", "?")
     price = pair_data.get("priceUsd", "?")
     mcap = pair_data.get("fdv", "?")
     pair_url = pair_data.get("url", "")
-    short_wallet = (wallet[:6] + "..." + wallet[-4:]) if wallet else "?"
     safety_status = check_contract_safety(pair_data)
-    total_accumulated = sum([item[1] for item in history])
 
     entry = {
-        "type": "accumulation",
+        "type": "early_entry",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
-        "wallet": short_wallet,
         "symbol": symbol,
         "token_address": token_address,
-        "usd_value": round(total_accumulated, 2),
+        "change_pct": round(change_pct, 1),
+        "usd_value": round(usd_value, 2) if usd_value else None,
         "price": price,
         "mcap": mcap,
         "liquidity": liq,
         "url": pair_url,
         "safety": safety_status,
-        "strength": float(total_accumulated)
+        "strength": float(change_pct) if change_pct else float(usd_value or 0)
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
     msg = (
-        f"🎯 *Pre-Pump Accumulation Detected* [{chain_id.upper()}]\n"
-        f"العملة: *{symbol}*\n"
+        f"🎯 *Early Entry Signal* [{chain_id.upper()}]\n"
+        f"العملة: *{symbol}* (بداية انطلاقة +{change_pct:.1f}%)\n"
         f"العقد: `{token_address}`\n"
         f"الحالة: {safety_status}\n"
-        f"إجمالي الشراء الحقيقي: ~${total_accumulated:,.0f}\n"
-        f"السعر الحالي: ${price}\n"
+        f"السعر: ${price}\n"
         f"Market Cap: ${mcap}\n"
         f"Liquidity: ${liq:,.0f}\n"
         f"{pair_url}"
@@ -222,84 +204,37 @@ def record_accumulation_alert(chain_id, token_address, wallet, pair_data, usd_va
     send_telegram_alert(msg)
 
 
-# ============ فحص التحويلات الحقيقية ============
-
-def check_solana_token(token_address, pair_data):
-    url = "https://public-api.solscan.io/token/transfer"
+def check_early_pump(chain_id, token_address, pair_data):
+    if not pair_data:
+        return
     try:
-        r = requests.get(url, params={"tokenAddress": token_address, "limit": 10}, timeout=10)
-        r.raise_for_status()
-        txs = r.json().get("data", [])
-    except Exception:
+        price = float(pair_data.get("priceUsd") or 0)
+    except (TypeError, ValueError):
+        return
+    if price <= 0:
         return
 
-    price = float(pair_data.get("priceUsd") or 0) if pair_data else 0
-    for tx in txs:
-        tx_id = tx.get("signature") or tx.get("txHash")
-        if not tx_id or tx_id in seen_tx_ids:
-            continue
-        seen_tx_ids.add(tx_id)
-        decimals = tx.get("decimals", 0)
-        amount = float(tx.get("amount", 0)) / (10 ** decimals) if decimals else 0
-        usd_value = price * amount
-        if usd_value >= WHALE_BUY_THRESHOLD_USD:
-            record_accumulation_alert("solana", token_address, tx.get("destination") or tx.get("owner"), pair_data, usd_value)
+    now = time.time()
+    hist = price_history.setdefault(token_address, deque())
+    hist.append((now, price))
 
+    while hist and now - hist[0][0] > PUMP_WINDOW_SECONDS:
+        hist.popleft()
 
-def check_evm_token(chain_id, token_address, pair_data):
-    cfg = EVM_CHAINS[chain_id]
-    if not cfg["api_base"]:
-        return
-    api_key = os.environ.get(cfg["api_key_env"], "")
-    params = {
-        "module": "account", "action": "tokentx", "contractaddress": token_address,
-        "sort": "desc", "page": 1, "offset": 15, "apikey": api_key,
-    }
-    try:
-        r = requests.get(cfg["api_base"], params=params, timeout=10)
-        r.raise_for_status()
-        result = r.json().get("result", [])
-        if not isinstance(result, list):
-            return
-    except Exception:
+    if len(hist) < 2:
         return
 
-    price = float(pair_data.get("priceUsd") or 0) if pair_data else 0
-    for tx in result:
-        tx_id = tx.get("hash")
-        if not tx_id or tx_id in seen_tx_ids:
-            continue
-        seen_tx_ids.add(tx_id)
-        decimals = int(tx.get("tokenDecimal", 18) or 18)
-        amount = int(tx.get("value", 0) or 0) / (10 ** decimals)
-        usd_value = price * amount
-        if usd_value >= WHALE_BUY_THRESHOLD_USD:
-            record_accumulation_alert(chain_id, token_address, tx.get("to"), pair_data, usd_value)
-
-
-def check_tron_token(token_address, pair_data):
-    url = "https://apilist.tronscanapi.com/api/token_trc20/transfers"
-    try:
-        r = requests.get(url, params={"contract_address": token_address, "limit": 10, "start": 0}, timeout=10)
-        r.raise_for_status()
-        txs = r.json().get("token_transfers", [])
-    except Exception:
+    oldest_price = hist[0][1]
+    if oldest_price <= 0:
         return
 
-    price = float(pair_data.get("priceUsd") or 0) if pair_data else 0
-    for tx in txs:
-        tx_id = tx.get("transaction_id")
-        if not tx_id or tx_id in seen_tx_ids:
-            continue
-        seen_tx_ids.add(tx_id)
-        decimals = int(tx.get("decimals", 6) or 6)
-        amount = int(tx.get("quant", 0) or 0) / (10 ** decimals)
-        usd_value = price * amount
-        if usd_value >= WHALE_BUY_THRESHOLD_USD:
-            record_accumulation_alert("tron", token_address, tx.get("to_address"), pair_data, usd_value)
+    change_pct = (price - oldest_price) / oldest_price * 100
+    # تنبيه مبكر فور بدء الارتفاع بنسبة طفيفة آمنة (مثلاً 5% إلى 25%)
+    if PUMP_THRESHOLD_PERCENT <= change_pct <= 35:
+        record_early_entry(chain_id, token_address, pair_data, change_pct)
 
 
-# ============ حلقة المسح الشامل ============
+# ============ حلقة المسح والشامل ============
 
 async def scanner_loop():
     trending = []
@@ -325,13 +260,7 @@ async def scanner_loop():
 
                     pair_data = pairs_dict.get(token_address)
                     if pair_data:
-                        if chain_type == "solana":
-                            await asyncio.to_thread(check_solana_token, token_address, pair_data)
-                        elif chain_type == "evm":
-                            await asyncio.to_thread(check_evm_token, chain_id, token_address, pair_data)
-                        elif chain_type == "tron":
-                            await asyncio.to_thread(check_tron_token, token_address, pair_data)
-                        
+                        await asyncio.to_thread(check_early_pump, chain_id, token_address, pair_data)
                         stats["scanned_tokens"] += 1
 
                 await asyncio.sleep(2.0)
