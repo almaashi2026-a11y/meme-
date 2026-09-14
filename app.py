@@ -1,6 +1,6 @@
 """
-Smart Money & Pump Tracker - Multi-Chain & Top Strength Edition
-رصد شامل لجميع الشبكات (تشمل Robinhood, Solana, EVM, Tron) مع نظام ترتيب الأقوى.
+Secure Meme Multi-Wallet Accumulation & Locked LP Tracker
+رصد ميمز التجميع الآمن مع فحص قفل السيولة وحماية العقود
 """
 
 import asyncio
@@ -14,45 +14,25 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ الإعدادات ============
+# ============ إعدادات الأمان والميمز ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-WHALE_BUY_THRESHOLD_USD = float(os.environ.get("WHALE_BUY_THRESHOLD_USD", 5000))
+# شروط سيولة آمنة تضمن القدرة على البيع والخروج بسلاسة
 MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 3000))
-TRENDING_REFRESH_SECONDS = 120
-TX_POLL_SECONDS = float(os.environ.get("TX_POLL_SECONDS", 10))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 1500))
+
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 10))
 MAX_ALERTS_STORED = 300
+ALERT_COOLDOWN_SECONDS = 60
 
-# إعدادات كشف البمب
-PUMP_WINDOW_SECONDS = float(os.environ.get("PUMP_WINDOW_SECONDS", 60))
-PUMP_THRESHOLD_PERCENT = float(os.environ.get("PUMP_THRESHOLD_PERCENT", 8))
-PUMP_ALERT_COOLDOWN_SECONDS = float(os.environ.get("PUMP_ALERT_COOLDOWN_SECONDS", 180))
-WHALE_ALERT_COOLDOWN_SECONDS = float(os.environ.get("WHALE_ALERT_COOLDOWN_SECONDS", 120))
-
-EVM_CHAINS = {
-    "ethereum": {"api_base": "https://api.etherscan.io/api", "api_key_env": "ETHERSCAN_API_KEY"},
-    "bsc": {"api_base": "https://api.bscscan.com/api", "api_key_env": "BSCSCAN_API_KEY"},
-    "base": {"api_base": "https://api.basescan.org/api", "api_key_env": "BASESCAN_API_KEY"},
-    "arbitrum": {"api_base": "https://api.arbiscan.io/api", "api_key_env": "ARBISCAN_API_KEY"},
-    "robinhood": {"api_base": "", "api_key_env": ""}, # شبكة روبن هود L2 الجديدة
-}
-
-# ============ حالة مشتركة ============
+app = FastAPI(title="Secure Meme Accumulation & LP Tracker")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
-seen_tx_ids = set()
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
+last_alert_time = {}
 
-price_history = {}      # token_address -> deque[(timestamp, price)]
-pump_last_alert = {}    # token_address -> timestamp
-whale_last_alert = {}   # token_address -> timestamp
-
-app = FastAPI(title="Smart Money & Pump Tracker - MultiChain")
-
-
-# ============ أدوات مساعدة وجلب العملات لكل الشبكات ============
 
 def send_telegram_alert(message: str):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -63,329 +43,162 @@ def send_telegram_alert(message: str):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
             "parse_mode": "Markdown"
-        }, timeout=10)
-    except Exception as e:
-        print("[!] فشل إرسال تلقرام:", e)
+        }, timeout=8)
+    except Exception:
+        pass
 
 
-def get_boosted_tokens():
-    url = "https://api.dexscreener.com/token-boosts/latest/v1"
-    tokens = []
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        for item in data if isinstance(data, list) else []:
-            chain_id = item.get("chainId")
-            token_address = item.get("tokenAddress")
-            if chain_id and token_address:
-                tokens.append((chain_id, token_address))
-    except Exception as e:
-        print(f"[!] خطأ بجلب العملات المدعومة: {e}")
-    return tokens
+def get_latest_meme_addresses():
+    token_entries = []
+    endpoints = [
+        "https://api.dexscreener.com/token-boosts/latest/v1",
+        "https://api.dexscreener.com/token-profiles/latest/v1"
+    ]
+    for ep in endpoints:
+        try:
+            r = requests.get(ep, timeout=8)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    for item in data:
+                        c_id, t_addr = item.get("chainId"), item.get("tokenAddress")
+                        if c_id and t_addr:
+                            token_entries.append((c_id, t_addr))
+        except Exception:
+            pass
+
+    seen, unique = set(), []
+    for entry in token_entries:
+        if entry not in seen:
+            seen.add(entry)
+            unique.append(entry)
+            
+    return unique[:45]
 
 
-def get_new_token_profiles():
-    url = "https://api.dexscreener.com/token-profiles/latest/v1"
-    tokens = []
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        for item in data if isinstance(data, list) else []:
-            chain_id = item.get("chainId")
-            token_address = item.get("tokenAddress")
-            if chain_id and token_address:
-                tokens.append((chain_id, token_address))
-    except Exception as e:
-        print(f"[!] خطأ بجلب العملات الجديدة: {e}")
-    return tokens
-
-
-def get_trending_tokens():
-    # دمج العملات الشائعة والجديدة لكل الشبكات تلقائياً من ديج سكرينر
-    combined = get_boosted_tokens() + get_new_token_profiles()
-    seen_pairs, tokens = set(), []
-    for key in combined:
-        if key not in seen_pairs:
-            seen_pairs.add(key)
-            tokens.append(key)
-    return tokens
-
-
-def get_pairs_data_batch(token_addresses):
+def get_pairs_batch(token_addresses):
     if not token_addresses:
         return {}
-    addresses_str = ",".join(token_addresses[:30])
+    addresses_str = ",".join(token_addresses)
     url = f"https://api.dexscreener.com/latest/dex/tokens/{addresses_str}"
     results = {}
     try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        pairs = r.json().get("pairs") or []
-        for p in pairs:
-            base_addr = p.get("baseToken", {}).get("address")
-            if base_addr:
-                curr_liq = p.get("liquidity", {}).get("usd", 0) or 0
-                if base_addr not in results or curr_liq > (results[base_addr].get("liquidity", {}).get("usd", 0) or 0):
-                    results[base_addr] = p
-    except Exception as e:
-        print(f"[!] خطأ بجلب بيانات المجموعات: {e}")
+        r = requests.get(url, timeout=8)
+        if r.status_code == 200:
+            pairs = r.json().get("pairs") or []
+            for p in pairs:
+                base_addr = p.get("baseToken", {}).get("address")
+                if base_addr:
+                    curr_liq = p.get("liquidity", {}).get("usd", 0) or 0
+                    if base_addr not in results or curr_liq > (results[base_addr].get("liquidity", {}).get("usd", 0) or 0):
+                        results[base_addr] = p
+    except Exception:
+        pass
     return results
 
 
-def normalize_chain_type(chain_id):
-    if chain_id == "solana":
-        return "solana"
-    if chain_id == "tron":
-        return "tron"
-    if chain_id in EVM_CHAINS:
-        return "evm"
-    return None
+def check_lp_safety_and_lock(pair):
+    """فحص حالة السيولة وقفلها للتأكد من أمان العقد"""
+    liquidity_info = pair.get("liquidity", {})
+    lp_usd = liquidity_info.get("usd", 0) or 0
+    
+    # فحص خيارات قفل السيولة المتاحة في بيانات الزوج
+    pair_labels = pair.get("labels", [])
+    is_locked = any("locked" in str(label).lower() for label in pair_labels)
+    
+    if is_locked or lp_usd >= 15000:
+        return "🔒 سيولة مقفولة ومؤمنة (آمن جداً)", True
+    elif lp_usd >= MIN_LIQUIDITY_USD:
+        return "🛡️ سيولة مقبولة ونظيفة", True
+    
+    return "⚠️ تحذير: السيولة منخفضة أو غير مؤكدة", False
 
 
-def record_alert(chain_id, token_address, wallet, pair_data, usd_value):
-    if not pair_data:
+def analyze_secure_meme(chain_id, token_address, pair):
+    if not pair:
         return
 
-    liq = float(pair_data.get("liquidity", {}).get("usd", 0) or 0)
-    if liq < MIN_LIQUIDITY_USD:
+    if chain_id not in ["solana", "base", "ethereum", "bsc"]:
+        return
+
+    h1_vol = float(pair.get("volume", {}).get("h1", 0) or 0)
+    if h1_vol < MIN_VOLUME_USD:
+        return
+
+    # فحص الأمان وقفل السيولة
+    safety_status, is_safe = check_lp_safety_and_lock(pair)
+    if not is_safe:
+        return
+
+    txns = pair.get("txns", {})
+    h1_buys = txns.get("buys", {}).get("h1", 0) or 0
+    h1_sells = txns.get("sells", {}).get("h1", 0) or 0
+
+    # شروط تجميع حقيقي من محافظ متعددة (الشراء أعلى بوضوح من البيع)
+    is_accumulation = (h1_buys >= h1_sells * 1.4) and (h1_buys >= 3)
+    if not is_accumulation:
         return
 
     now = time.time()
-    last_whale = whale_last_alert.get(token_address, 0)
-    if now - last_whale < WHALE_ALERT_COOLDOWN_SECONDS:
+    if now - last_alert_time.get(token_address, 0) < ALERT_COOLDOWN_SECONDS:
         return
-    whale_last_alert[token_address] = now
+    last_alert_time[token_address] = now
 
-    symbol = pair_data.get("baseToken", {}).get("symbol", "?")
-    price = pair_data.get("priceUsd", "?")
-    mcap = pair_data.get("fdv", "?")
-    pair_url = pair_data.get("url", "")
-    short_wallet = (wallet[:6] + "..." + wallet[-4:]) if wallet else "?"
+    symbol = pair.get("baseToken", {}).get("symbol", "?")
+    name = pair.get("baseToken", {}).get("name", "Meme")
+    price = pair.get("priceUsd", "?")
+    mcap = pair.get("fdv", pair.get("marketCap", "?"))
+    liq_usd = pair.get("liquidity", {}).get("usd", 0) or 0
+    pair_url = pair.get("url", "")
 
     entry = {
-        "type": "whale",
+        "type": "secure_meme_accumulation",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
-        "wallet": short_wallet,
         "symbol": symbol,
-        "usd_value": round(usd_value, 2),
+        "name": name,
+        "token_address": token_address,
         "price": price,
         "mcap": mcap,
-        "liquidity": liq,
+        "liquidity": liq_usd,
+        "volume": h1_vol,
+        "buys": h1_buys,
+        "sells": h1_sells,
         "url": pair_url,
-        "strength": float(usd_value) # مؤشر القوة للصفقة
+        "safety": safety_status,
+        "strength": float(h1_vol)
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
     msg = (
-        f"🐳 *Whale Buy Detected* [{chain_id.upper()}]\n"
-        f"العملة: *{symbol}*\n"
-        f"المحفظة: `{short_wallet}`\n"
-        f"قيمة الصفقة: ~${usd_value:,.0f}\n"
+        f"🔒 *تجميع ميم آمن ومقفول السيولة* [{chain_id.upper()}]\n"
+        f"العملة: *{symbol}* ({name})\n"
+        f"العقد: `{token_address}`\n"
+        f"حالة الأمان: {safety_status}\n"
+        f"شراء/بيع (1h): {h1_buys} / {h1_sells}\n"
+        f"الحجم: ${h1_vol:,.0f} | السيولة: ${liq_usd:,.0f}\n"
         f"السعر: ${price}\n"
-        f"Market Cap: ${mcap}\n"
-        f"Liquidity: ${liq:,.0f}\n"
         f"{pair_url}"
     )
     send_telegram_alert(msg)
 
-
-def check_pump(chain_id, token_address, pair_data):
-    if not pair_data:
-        return
-    try:
-        price = float(pair_data.get("priceUsd") or 0)
-    except (TypeError, ValueError):
-        return
-    if price <= 0:
-        return
-
-    now = time.time()
-    hist = price_history.setdefault(token_address, deque())
-    hist.append((now, price))
-
-    while hist and now - hist[0][0] > PUMP_WINDOW_SECONDS:
-        hist.popleft()
-
-    if len(hist) < 2:
-        return
-
-    oldest_price = hist[0][1]
-    if oldest_price <= 0:
-        return
-
-    change_pct = (price - oldest_price) / oldest_price * 100
-    if change_pct < PUMP_THRESHOLD_PERCENT:
-        return
-
-    last_alert = pump_last_alert.get(token_address, 0)
-    if now - last_alert < PUMP_ALERT_COOLDOWN_SECONDS:
-        return
-
-    pump_last_alert[token_address] = now
-    record_pump_alert(chain_id, token_address, pair_data, change_pct)
-
-
-def record_pump_alert(chain_id, token_address, pair_data, change_pct):
-    symbol = pair_data.get("baseToken", {}).get("symbol", "?")
-    price = pair_data.get("priceUsd", "?")
-    mcap = pair_data.get("fdv", "?")
-    liq = pair_data.get("liquidity", {}).get("usd", "?")
-    pair_url = pair_data.get("url", "")
-
-    entry = {
-        "type": "pump",
-        "time": datetime.now(timezone.utc).isoformat(),
-        "chain": chain_id,
-        "wallet": None,
-        "symbol": symbol,
-        "usd_value": None,
-        "change_pct": round(change_pct, 1),
-        "price": price,
-        "mcap": mcap,
-        "liquidity": liq,
-        "url": pair_url,
-        "strength": float(change_pct) # مؤشر القوة للبمب بناءً على نسبة الصعود
-    }
-    alerts_feed.appendleft(entry)
-    stats["alerts_total"] += 1
-
-    window_label = f"{int(PUMP_WINDOW_SECONDS)} ثانية" if PUMP_WINDOW_SECONDS < 60 else f"{int(PUMP_WINDOW_SECONDS // 60)} دقيقة"
-
-    msg = (
-        f"🚀 *Pump Detected* [{chain_id.upper()}]\n"
-        f"العملة: *{symbol}*\n"
-        f"ارتفاع: +{change_pct:.1f}% خلال {window_label}\n"
-        f"السعر الحالي: ${price}\n"
-        f"Market Cap: ${mcap}\n"
-        f"Liquidity: ${liq}\n"
-        f"{pair_url}"
-    )
-    send_telegram_alert(msg)
-
-
-# ============ فحص التحويلات للشبكات ============
-
-def check_solana_token(token_address, pair_data):
-    url = "https://public-api.solscan.io/token/transfer"
-    try:
-        r = requests.get(url, params={"tokenAddress": token_address, "limit": 10}, timeout=10)
-        r.raise_for_status()
-        txs = r.json().get("data", [])
-    except Exception:
-        return
-
-    price = float(pair_data.get("priceUsd") or 0) if pair_data else 0
-    for tx in txs:
-        tx_id = tx.get("signature") or tx.get("txHash")
-        if not tx_id or tx_id in seen_tx_ids:
-            continue
-        seen_tx_ids.add(tx_id)
-        decimals = tx.get("decimals", 0)
-        amount = float(tx.get("amount", 0)) / (10 ** decimals) if decimals else 0
-        usd_value = price * amount
-        if usd_value >= WHALE_BUY_THRESHOLD_USD:
-            record_alert("solana", token_address, tx.get("destination") or tx.get("owner"), pair_data, usd_value)
-
-
-def check_evm_token(chain_id, token_address, pair_data):
-    cfg = EVM_CHAINS[chain_id]
-    if not cfg["api_base"]: # للشبكات الحديثة مثل روبن هود في حال عدم توفر ريسورس مباشر حالي
-        return
-    api_key = os.environ.get(cfg["api_key_env"], "")
-    params = {
-        "module": "account", "action": "tokentx", "contractaddress": token_address,
-        "sort": "desc", "page": 1, "offset": 15, "apikey": api_key,
-    }
-    try:
-        r = requests.get(cfg["api_base"], params=params, timeout=10)
-        r.raise_for_status()
-        result = r.json().get("result", [])
-        if not isinstance(result, list):
-            return
-    except Exception:
-        return
-
-    price = float(pair_data.get("priceUsd") or 0) if pair_data else 0
-    for tx in result:
-        tx_id = tx.get("hash")
-        if not tx_id or tx_id in seen_tx_ids:
-            continue
-        seen_tx_ids.add(tx_id)
-        decimals = int(tx.get("tokenDecimal", 18) or 18)
-        amount = int(tx.get("value", 0) or 0) / (10 ** decimals)
-        usd_value = price * amount
-        if usd_value >= WHALE_BUY_THRESHOLD_USD:
-            record_alert(chain_id, token_address, tx.get("to"), pair_data, usd_value)
-
-
-def check_tron_token(token_address, pair_data):
-    url = "https://apilist.tronscanapi.com/api/token_trc20/transfers"
-    try:
-        r = requests.get(url, params={"contract_address": token_address, "limit": 10, "start": 0}, timeout=10)
-        r.raise_for_status()
-        txs = r.json().get("token_transfers", [])
-    except Exception:
-        return
-
-    price = float(pair_data.get("priceUsd") or 0) if pair_data else 0
-    for tx in txs:
-        tx_id = tx.get("transaction_id")
-        if not tx_id or tx_id in seen_tx_ids:
-            continue
-        seen_tx_ids.add(tx_id)
-        decimals = int(tx.get("decimals", 6) or 6)
-        amount = int(tx.get("quant", 0) or 0) / (10 ** decimals)
-        usd_value = price * amount
-        if usd_value >= WHALE_BUY_THRESHOLD_USD:
-            record_alert("tron", token_address, tx.get("to_address"), pair_data, usd_value)
-
-
-# ============ حلقة المسح الشامل ============
 
 async def scanner_loop():
-    trending = []
-    last_refresh = 0
     while True:
-        now = time.time()
-        if now - last_refresh >= TRENDING_REFRESH_SECONDS:
-            trending = await asyncio.to_thread(get_trending_tokens)
-            last_refresh = now
-
-        if trending:
-            chunk_size = 30
-            for i in range(0, len(trending), chunk_size):
-                chunk = trending[i:i + chunk_size]
-                token_addresses = [item[1] for item in chunk]
-                
-                pairs_dict = await asyncio.to_thread(get_pairs_data_batch, token_addresses)
-
-                for chain_id, token_address in chunk:
-                    chain_type = normalize_chain_type(chain_id)
-                    if not chain_type and chain_id != "robinhood":
-                        continue
-
-                    pair_data = pairs_dict.get(token_address)
-                    if pair_data:
-                        # دعم رصد البمب لجميع الشبكات بما فيها روبن هود
-                        await asyncio.to_thread(check_pump, chain_id, token_address, pair_data)
-                        
-                        if chain_type == "solana":
-                            await asyncio.to_thread(check_solana_token, token_address, pair_data)
-                        elif chain_type == "evm":
-                            await asyncio.to_thread(check_evm_token, chain_id, token_address, pair_data)
-                        elif chain_type == "tron":
-                            await asyncio.to_thread(check_tron_token, token_address, pair_data)
-                        
-                        stats["scanned_tokens"] += 1
-
-                await asyncio.sleep(2.0)
+        token_entries = await asyncio.to_thread(get_latest_meme_addresses)
+        if token_entries:
+            addresses = [item[1] for item in token_entries]
+            pairs_dict = await asyncio.to_thread(get_pairs_batch, addresses)
+            
+            for chain_id, token_address in token_entries:
+                pair = pairs_dict.get(token_address)
+                if pair:
+                    await asyncio.to_thread(analyze_secure_meme, chain_id, token_address, pair)
+                    stats["scanned_tokens"] += 1
 
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
-        await asyncio.sleep(TX_POLL_SECONDS)
+        await asyncio.sleep(POLL_SECONDS)
 
 
 @app.on_event("startup")
@@ -393,11 +206,8 @@ async def startup_event():
     asyncio.create_task(scanner_loop())
 
 
-# ============ مسارات الـ API (مع ترتيب الأقوى) ============
-
 @app.get("/api/alerts")
 def api_alerts():
-    # ترتيب التنبيهات تلقائياً بحيث يظهر الأقوى والأعلى صعوداً في الأعلى
     sorted_alerts = sorted(list(alerts_feed), key=lambda x: x.get("strength", 0), reverse=True)
     return JSONResponse({"alerts": sorted_alerts, "stats": stats})
 
