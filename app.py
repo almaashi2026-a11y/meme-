@@ -33,8 +33,13 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 WHALE_BUY_THRESHOLD_USD = float(os.environ.get("WHALE_BUY_THRESHOLD_USD", 5000))
 TRENDING_REFRESH_SECONDS = 120
-TX_POLL_SECONDS = 20
+TX_POLL_SECONDS = float(os.environ.get("TX_POLL_SECONDS", 10))  # كل كم ثانية نعيد فحص العملات (أسرع = كشف أبكر)
 MAX_ALERTS_STORED = 300
+
+# إعدادات كشف البمب (ارتفاع سعر مفاجئ) - مضبوطة للسرعة عشان بمبات الميم كوين قصيرة
+PUMP_WINDOW_SECONDS = float(os.environ.get("PUMP_WINDOW_SECONDS", 60))        # نافذة المراقبة (دقيقة وحدة افتراضياً)
+PUMP_THRESHOLD_PERCENT = float(os.environ.get("PUMP_THRESHOLD_PERCENT", 8))   # نسبة الارتفاع اللي تعتبر بمب
+PUMP_ALERT_COOLDOWN_SECONDS = float(os.environ.get("PUMP_ALERT_COOLDOWN_SECONDS", 180))  # ما نكرر تنبيه نفس العملة قبل هالمدة
 
 EVM_CHAINS = {
     "ethereum": {"api_base": "https://api.etherscan.io/api", "api_key_env": "ETHERSCAN_API_KEY"},
@@ -48,6 +53,9 @@ EVM_CHAINS = {
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)  # آخر التنبيهات المكتشفة
 seen_tx_ids = set()
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
+
+price_history = {}   # token_address -> deque[(timestamp, price)]
+pump_last_alert = {}  # token_address -> آخر وقت انبعث فيه تنبيه بمب لهالعملة
 
 app = FastAPI(title="Smart Money Tracker")
 
@@ -145,6 +153,7 @@ def record_alert(chain_id, wallet, pair_data, usd_value):
     short_wallet = (wallet[:6] + "..." + wallet[-4:]) if wallet else "?"
 
     entry = {
+        "type": "whale",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "wallet": short_wallet,
@@ -164,6 +173,84 @@ def record_alert(chain_id, wallet, pair_data, usd_value):
         f"العملة: *{symbol}*\n"
         f"قيمة الصفقة: ~${usd_value:,.0f}\n"
         f"السعر: ${price}\n"
+        f"Market Cap: ${mcap}\n"
+        f"Liquidity: ${liq}\n"
+        f"{pair_url}"
+    )
+    send_telegram_alert(msg)
+
+
+def check_pump(chain_id, token_address, pair_data):
+    """يراقب سعر العملة عبر الوقت، ولو ارتفع فوق النسبة المحددة خلال النافذة الزمنية يبعث تنبيه بمب."""
+    if not pair_data:
+        return
+    try:
+        price = float(pair_data.get("priceUsd") or 0)
+    except (TypeError, ValueError):
+        return
+    if price <= 0:
+        return
+
+    now = time.time()
+    hist = price_history.setdefault(token_address, deque())
+    hist.append((now, price))
+
+    # نشيل النقاط الأقدم من نافذة المراقبة
+    while hist and now - hist[0][0] > PUMP_WINDOW_SECONDS:
+        hist.popleft()
+
+    if len(hist) < 2:
+        return
+
+    oldest_price = hist[0][1]
+    if oldest_price <= 0:
+        return
+
+    change_pct = (price - oldest_price) / oldest_price * 100
+    if change_pct < PUMP_THRESHOLD_PERCENT:
+        return
+
+    last_alert = pump_last_alert.get(token_address, 0)
+    if now - last_alert < PUMP_ALERT_COOLDOWN_SECONDS:
+        return  # تنبهنا لهالعملة قريب، نتجنب التكرار
+
+    pump_last_alert[token_address] = now
+    record_pump_alert(chain_id, pair_data, change_pct)
+
+
+def record_pump_alert(chain_id, pair_data, change_pct):
+    symbol = pair_data.get("baseToken", {}).get("symbol", "?")
+    price = pair_data.get("priceUsd", "?")
+    mcap = pair_data.get("fdv", "?")
+    liq = pair_data.get("liquidity", {}).get("usd", "?")
+    pair_url = pair_data.get("url", "")
+
+    entry = {
+        "type": "pump",
+        "time": datetime.now(timezone.utc).isoformat(),
+        "chain": chain_id,
+        "wallet": None,
+        "symbol": symbol,
+        "usd_value": None,
+        "change_pct": round(change_pct, 1),
+        "price": price,
+        "mcap": mcap,
+        "liquidity": liq,
+        "url": pair_url,
+    }
+    alerts_feed.appendleft(entry)
+    stats["alerts_total"] += 1
+
+    if PUMP_WINDOW_SECONDS < 60:
+        window_label = f"{int(PUMP_WINDOW_SECONDS)} ثانية"
+    else:
+        window_label = f"{int(PUMP_WINDOW_SECONDS // 60)} دقيقة"
+
+    msg = (
+        f"🚀 *Pump Detected* [{chain_id.upper()}]\n"
+        f"العملة: *{symbol}*\n"
+        f"ارتفاع: +{change_pct:.1f}% خلال {window_label}\n"
+        f"السعر الحالي: ${price}\n"
         f"Market Cap: ${mcap}\n"
         f"Liquidity: ${liq}\n"
         f"{pair_url}"
@@ -262,6 +349,7 @@ async def scanner_loop():
             if not chain_type:
                 continue
             pair_data = await asyncio.to_thread(get_pair_data, chain_id, token_address)
+            await asyncio.to_thread(check_pump, chain_id, token_address, pair_data)
             if chain_type == "solana":
                 await asyncio.to_thread(check_solana_token, token_address, pair_data)
             elif chain_type == "evm":
