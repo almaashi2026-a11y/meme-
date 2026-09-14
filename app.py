@@ -1,6 +1,6 @@
 """
-Instant Early Momentum Tracker - Ultra Fast Entry
-رصد الشرر الأول للانطلاقة السعرية الفورية والدخول المبكر اللحظي.
+Smart Inflow & Early Whale Tracker - Direct Entry Edition
+رصد التدفقات والسيولة الحقيقية للحيتان في لحظات الانطلاقة المبكرة.
 """
 
 import asyncio
@@ -14,21 +14,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ الإعدادات الفورية ============
+# ============ الإعدادات ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 2000))
-TRENDING_REFRESH_SECONDS = 60
-TX_POLL_SECONDS = float(os.environ.get("TX_POLL_SECONDS", 5)) # فحص أسرع كل 5 ثوانٍ
-MAX_ALERTS_STORED = 300
+# حد سيولة ممتاز يضمن الأمان والقدرة على البيع والشراء
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 3000))
+# حد صفقات الحيتان المبكرة
+WHALE_BUY_USD = float(os.environ.get("WHALE_BUY_USD", 1500))
 
-# شروط الانطلاقة الفورية (أول الشرارة)
-MOMENTUM_WINDOW_SECONDS = 30  # مراقبة آخر 30 ثانية فقط
-MIN_PUMP_PCT = 3.5            # تنبيه فوري عند أول صعود بنسبة 3.5% إلى 18% (قبل الارتفاعات الكبيرة)
-MAX_PUMP_PCT = 18.0
-ALERT_COOLDOWN_SECONDS = float(os.environ.get("ALERT_COOLDOWN_SECONDS", 120))
+TRENDING_REFRESH_SECONDS = 60
+TX_POLL_SECONDS = float(os.environ.get("TX_POLL_SECONDS", 5))
+MAX_ALERTS_STORED = 300
+ALERT_COOLDOWN_SECONDS = float(os.environ.get("ALERT_COOLDOWN_SECONDS", 90))
 
 EVM_CHAINS = {
     "ethereum": {"api_base": "https://api.etherscan.io/api", "api_key_env": "ETHERSCAN_API_KEY"},
@@ -38,18 +37,17 @@ EVM_CHAINS = {
     "robinhood": {"api_base": "", "api_key_env": ""},
 }
 
-# ============ حالة مشتركة ============
+# ============ حالة النظام ============
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
+seen_tx_ids = set()
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
-
-instant_price_store = {}
 last_alert_time = {}
 
-app = FastAPI(title="Instant Early Momentum Tracker")
+app = FastAPI(title="Smart Inflow & Early Whale Tracker")
 
 
-# ============ أدوات مساعدة وجلب البيانات ============
+# ============ أدوات الدعم والتنبيه ============
 
 def send_telegram_alert(message: str):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -61,8 +59,8 @@ def send_telegram_alert(message: str):
             "text": message,
             "parse_mode": "Markdown"
         }, timeout=10)
-    except Exception as e:
-        print("[!] فشل إرسال تلقرام:", e)
+    except Exception:
+        pass
 
 
 def get_boosted_tokens():
@@ -73,10 +71,9 @@ def get_boosted_tokens():
         r.raise_for_status()
         data = r.json()
         for item in data if isinstance(data, list) else []:
-            chain_id = item.get("chainId")
-            token_address = item.get("tokenAddress")
-            if chain_id and token_address:
-                tokens.append((chain_id, token_address))
+            c_id, t_addr = item.get("chainId"), item.get("tokenAddress")
+            if c_id and t_addr:
+                tokens.append((c_id, t_addr))
     except Exception:
         pass
     return tokens
@@ -90,10 +87,9 @@ def get_new_token_profiles():
         r.raise_for_status()
         data = r.json()
         for item in data if isinstance(data, list) else []:
-            chain_id = item.get("chainId")
-            token_address = item.get("tokenAddress")
-            if chain_id and token_address:
-                tokens.append((chain_id, token_address))
+            c_id, t_addr = item.get("chainId"), item.get("tokenAddress")
+            if c_id and t_addr:
+                tokens.append((c_id, t_addr))
     except Exception:
         pass
     return tokens
@@ -101,11 +97,11 @@ def get_new_token_profiles():
 
 def get_trending_tokens():
     combined = get_boosted_tokens() + get_new_token_profiles()
-    seen_pairs, tokens = set(), []
-    for key in combined:
-        if key not in seen_pairs:
-            seen_pairs.add(key)
-            tokens.append(key)
+    seen, tokens = set(), []
+    for k in combined:
+        if k not in seen:
+            seen.add(k)
+            tokens.append(k)
     return tokens
 
 
@@ -132,19 +128,13 @@ def get_pairs_data_batch(token_addresses):
 
 def check_contract_safety(pair_data):
     lp_usd = pair_data.get("liquidity", {}).get("usd", 0) or 0
-    if lp_usd >= 8000:
-        return "🛡️ سيولة ممتازة وآمنة"
-    return "🛡️ عقد نظيف (دخول مبكر)"
+    if lp_usd >= 10000:
+        return "🛡️ سيولة قوية وآمنة"
+    return "🛡️ عقد نظيف ودخول مبكر"
 
 
-def check_instant_momentum(chain_id, token_address, pair_data):
+def register_signal(chain_id, token_address, pair_data, buy_amount_usd):
     if not pair_data:
-        return
-    try:
-        price = float(pair_data.get("priceUsd") or 0)
-    except (TypeError, ValueError):
-        return
-    if price <= 0:
         return
 
     liq = float(pair_data.get("liquidity", {}).get("usd", 0) or 0)
@@ -152,67 +142,69 @@ def check_instant_momentum(chain_id, token_address, pair_data):
         return
 
     now = time.time()
+    if now - last_alert_time.get(token_address, 0) < ALERT_COOLDOWN_SECONDS:
+        return
+    last_alert_time[token_address] = now
+
+    symbol = pair_data.get("baseToken", {}).get("symbol", "?")
+    price = pair_data.get("priceUsd", "?")
+    mcap = pair_data.get("fdv", "?")
+    pair_url = pair_data.get("url", "")
+    safety_status = check_contract_safety(pair_data)
+
+    entry = {
+        "type": "smart_inflow",
+        "time": datetime.now(timezone.utc).isoformat(),
+        "chain": chain_id,
+        "symbol": symbol,
+        "token_address": token_address,
+        "usd_value": round(buy_amount_usd, 2),
+        "price": price,
+        "mcap": mcap,
+        "liquidity": liq,
+        "url": pair_url,
+        "safety": safety_status,
+        "strength": float(buy_amount_usd)
+    }
+    alerts_feed.appendleft(entry)
+    stats["alerts_total"] += 1
+
+    msg = (
+        f"🐋 *Smart Money Inflow* [{chain_id.upper()}]\n"
+        f"العملة: *{symbol}* (شراء حقيقي مبكر: ~${buy_amount_usd:,.0f})\n"
+        f"العقد: `{token_address}`\n"
+        f"الحالة: {safety_status}\n"
+        f"السعر: ${price}\n"
+        f"Market Cap: ${mcap}\n"
+        f"Liquidity: ${liq:,.0f}\n"
+        f"{pair_url}"
+    )
+    send_telegram_alert(msg)
+
+
+# ============ فحص المعاملات الحية والانطلاقة الأولى ============
+
+def evaluate_token_momentum(chain_id, token_address, pair_data):
+    if not pair_data:
+        return
+
+    # التحقق من نشاط الشراء مقابل البيع في آخر ساعة (تأكيد تدفق السيولة)
+    txns = pair_data.get("txns", {})
+    h1_buys = txns.get("buys", {}).get("h1", 0)
+    h1_sells = txns.get("sells", {}).get("h1", 0)
     
-    # تخزين السعر الأولي للعملة عند أول ظهور أو رصدها
-    if token_address not in instant_price_store:
-        instant_price_store[token_address] = (now, price)
-        return
+    # فحص حجم التداول للـ 5 دقائق أو الساعة الأولى للتأكد من أننا في البداية
+    volume = pair_data.get("volume", {})
+    h1_vol = volume.get("h1", 0) or 0
 
-    first_time, first_price = instant_price_store[token_address]
-    
-    # إذا مر وقت طويل على السعر الأول، نقوم بتحديث نقطة البداية لتبقى الشراسة لحلية فورية
-    if now - first_time > MOMENTUM_WINDOW_SECONDS:
-        instant_price_store[token_address] = (now, price)
-        return
-
-    if first_price <= 0:
-        return
-
-    change_pct = (price - first_price) / first_price * 100
-
-    # التنبيه الفوري بمجرد تحقيق الانطلاقة الأولى وعدم التأخير للنسب العالية
-    if MIN_PUMP_PCT <= change_pct <= MAX_PUMP_PCT:
-        last_alert = last_alert_time.get(token_address, 0)
-        if now - last_alert < ALERT_COOLDOWN_SECONDS:
-            return
-        last_alert_time[token_address] = now
-
-        symbol = pair_data.get("baseToken", {}).get("symbol", "?")
-        mcap = pair_data.get("fdv", "?")
-        pair_url = pair_data.get("url", "")
-        safety_status = check_contract_safety(pair_data)
-
-        entry = {
-            "type": "instant_momentum",
-            "time": datetime.now(timezone.utc).isoformat(),
-            "chain": chain_id,
-            "symbol": symbol,
-            "token_address": token_address,
-            "change_pct": round(change_pct, 1),
-            "price": price,
-            "mcap": mcap,
-            "liquidity": liq,
-            "url": pair_url,
-            "safety": safety_status,
-            "strength": float(change_pct)
-        }
-        alerts_feed.appendleft(entry)
-        stats["alerts_total"] += 1
-
-        msg = (
-            f"⚡ *Instant Early Momentum* [{chain_id.upper()}]\n"
-            f"العملة: *{symbol}* (انطلاقة أولية +{change_pct:.1f}%)\n"
-            f"العقد: `{token_address}`\n"
-            f"الحالة: {safety_status}\n"
-            f"السعر: ${price}\n"
-            f"Market Cap: ${mcap}\n"
-            f"Liquidity: ${liq:,.0f}\n"
-            f"{pair_url}"
-        )
-        send_telegram_alert(msg)
+    # شروط الدخول المبكر الموزونة: وجود تفوق في المشتريات وسيولة جيدة وحجم تنافسي مبكر
+    if h1_buys > 3 and h1_buys >= h1_sells * 1.5 and h1_vol > 1000:
+        estimated_buy_power = h1_vol / max(1, (h1_buys + h1_sells)) * h1_buys
+        if estimated_buy_power >= WHALE_BUY_USD:
+            register_signal(chain_id, token_address, pair_data, estimated_buy_power)
 
 
-# ============ حلقة المسح السريع ============
+# ============ حلقة الفحص المستمر ============
 
 async def scanner_loop():
     trending = []
@@ -234,7 +226,7 @@ async def scanner_loop():
                 for chain_id, token_address in chunk:
                     pair_data = pairs_dict.get(token_address)
                     if pair_data:
-                        await asyncio.to_thread(check_instant_momentum, chain_id, token_address, pair_data)
+                        await asyncio.to_thread(evaluate_token_momentum, chain_id, token_address, pair_data)
                         stats["scanned_tokens"] += 1
 
                 await asyncio.sleep(1.0)
