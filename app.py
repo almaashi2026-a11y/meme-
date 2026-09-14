@@ -1,12 +1,6 @@
 """
 Smart Money & Pump Tracker - Dashboard Edition
 تطبيق متكامل: مسح تلقائي للخلفية للعملات + رصد البمب لحظياً + صفقات الحيتان + داشبورد ويب + تنبيهات تليجرام.
-
-المتطلبات:
-    pip install fastapi uvicorn requests
-
-التشغيل محلياً:
-    uvicorn app:app --host 0.0.0.0 --port 8000
 """
 
 import asyncio
@@ -26,14 +20,16 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 WHALE_BUY_THRESHOLD_USD = float(os.environ.get("WHALE_BUY_THRESHOLD_USD", 5000))
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 3000)) # أقل سيولة مطلوبة لاعتبار الصفقة حقيقية
 TRENDING_REFRESH_SECONDS = 120
 TX_POLL_SECONDS = float(os.environ.get("TX_POLL_SECONDS", 5))  # فحص سريع كل 5 ثوانٍ
 MAX_ALERTS_STORED = 300
 
 # إعدادات كشف البمب (ارتفاع سعر مفاجئ)
-PUMP_WINDOW_SECONDS = float(os.environ.get("PUMP_WINDOW_SECONDS", 60))        # نافذة المراقبة (دقيقة)
+PUMP_WINDOW_SECONDS = float(os.environ.get("PUMP_WINDOW_SECONDS", 60))        # نافذة المراقبة
 PUMP_THRESHOLD_PERCENT = float(os.environ.get("PUMP_THRESHOLD_PERCENT", 8))   # نسبة الصعود لاعتبارها بمب
-PUMP_ALERT_COOLDOWN_SECONDS = float(os.environ.get("PUMP_ALERT_COOLDOWN_SECONDS", 180)) # منع تكرار التنبيه
+PUMP_ALERT_COOLDOWN_SECONDS = float(os.environ.get("PUMP_ALERT_COOLDOWN_SECONDS", 180)) # منع تكرار تنبيه البمب
+WHALE_ALERT_COOLDOWN_SECONDS = float(os.environ.get("WHALE_ALERT_COOLDOWN_SECONDS", 120)) # منع تكرار تنبيه الحوت لنفس العملة
 
 EVM_CHAINS = {
     "ethereum": {"api_base": "https://api.etherscan.io/api", "api_key_env": "ETHERSCAN_API_KEY"},
@@ -48,8 +44,9 @@ alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 seen_tx_ids = set()
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
 
-price_history = {}   # token_address -> deque[(timestamp, price)]
-pump_last_alert = {}  # token_address -> آخر وقت انبعث فيه تنبيه بمب
+price_history = {}      # token_address -> deque[(timestamp, price)]
+pump_last_alert = {}    # token_address -> آخر وقت انبعث فيه تنبيه بمب
+whale_last_alert = {}   # token_address -> آخر وقت انبعث فيه تنبيه حوت
 
 app = FastAPI(title="Smart Money & Pump Tracker")
 
@@ -138,12 +135,26 @@ def normalize_chain_type(chain_id):
     return None
 
 
-def record_alert(chain_id, wallet, pair_data, usd_value):
-    symbol = pair_data.get("baseToken", {}).get("symbol", "?") if pair_data else "?"
-    price = pair_data.get("priceUsd", "?") if pair_data else "?"
-    mcap = pair_data.get("fdv", "?") if pair_data else "?"
-    liq = pair_data.get("liquidity", {}).get("usd", "?") if pair_data else "?"
-    pair_url = pair_data.get("url", "") if pair_data else ""
+def record_alert(chain_id, token_address, wallet, pair_data, usd_value):
+    if not pair_data:
+        return
+    
+    # فحص الحد الأدنى للسيولة لتجنب العملات الوهيمة
+    liq = float(pair_data.get("liquidity", {}).get("usd", 0) or 0)
+    if liq < MIN_LIQUIDITY_USD:
+        return
+
+    # تطبيق نظام التبريد (Cooldown) لمنع إزعاج التنبيهات المتكررة لنفس العملة
+    now = time.time()
+    last_whale = whale_last_alert.get(token_address, 0)
+    if now - last_whale < WHALE_ALERT_COOLDOWN_SECONDS:
+        return
+    whale_last_alert[token_address] = now
+
+    symbol = pair_data.get("baseToken", {}).get("symbol", "?")
+    price = pair_data.get("priceUsd", "?")
+    mcap = pair_data.get("fdv", "?")
+    pair_url = pair_data.get("url", "")
     short_wallet = (wallet[:6] + "..." + wallet[-4:]) if wallet else "?"
 
     entry = {
@@ -163,12 +174,12 @@ def record_alert(chain_id, wallet, pair_data, usd_value):
 
     msg = (
         f"🐳 *Whale Buy Detected* [{chain_id.upper()}]\n"
-        f"المحفظة: `{short_wallet}`\n"
         f"العملة: *{symbol}*\n"
+        f"المحفظة: `{short_wallet}`\n"
         f"قيمة الصفقة: ~${usd_value:,.0f}\n"
         f"السعر: ${price}\n"
         f"Market Cap: ${mcap}\n"
-        f"Liquidity: ${liq}\n"
+        f"Liquidity: ${liq:,.0f}\n"
         f"{pair_url}"
     )
     send_telegram_alert(msg)
@@ -207,10 +218,10 @@ def check_pump(chain_id, token_address, pair_data):
         return
 
     pump_last_alert[token_address] = now
-    record_pump_alert(chain_id, pair_data, change_pct)
+    record_pump_alert(chain_id, token_address, pair_data, change_pct)
 
 
-def record_pump_alert(chain_id, pair_data, change_pct):
+def record_pump_alert(chain_id, token_address, pair_data, change_pct):
     symbol = pair_data.get("baseToken", {}).get("symbol", "?")
     price = pair_data.get("priceUsd", "?")
     mcap = pair_data.get("fdv", "?")
@@ -268,7 +279,7 @@ def check_solana_token(token_address, pair_data):
         amount = float(tx.get("amount", 0)) / (10 ** decimals) if decimals else 0
         usd_value = price * amount
         if usd_value >= WHALE_BUY_THRESHOLD_USD:
-            record_alert("solana", tx.get("destination") or tx.get("owner"), pair_data, usd_value)
+            record_alert("solana", token_address, tx.get("destination") or tx.get("owner"), pair_data, usd_value)
 
 
 def check_evm_token(chain_id, token_address, pair_data):
@@ -297,7 +308,7 @@ def check_evm_token(chain_id, token_address, pair_data):
         amount = int(tx.get("value", 0) or 0) / (10 ** decimals)
         usd_value = price * amount
         if usd_value >= WHALE_BUY_THRESHOLD_USD:
-            record_alert(chain_id, tx.get("to"), pair_data, usd_value)
+            record_alert(chain_id, token_address, tx.get("to"), pair_data, usd_value)
 
 
 def check_tron_token(token_address, pair_data):
@@ -319,7 +330,7 @@ def check_tron_token(token_address, pair_data):
         amount = int(tx.get("quant", 0) or 0) / (10 ** decimals)
         usd_value = price * amount
         if usd_value >= WHALE_BUY_THRESHOLD_USD:
-            record_alert("tron", tx.get("to_address"), pair_data, usd_value)
+            record_alert("tron", token_address, tx.get("to_address"), pair_data, usd_value)
 
 
 # ============ حلقة المسح الخلفية ============
