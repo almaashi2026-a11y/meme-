@@ -1,6 +1,6 @@
 """
-Multi-Wallet Accumulation & Retention Tracker
-رصد الشراء القوي من محافظ متعددة والاحتفاظ بها في البداية المبكرة.
+Live Real-Time Market Feed Tracker - Instant Accumulation
+رصد حي ومباشر لأحدث الأزواج والتجميع اللحظي بدون تأخير.
 """
 
 import asyncio
@@ -14,20 +14,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ الإعدادات ============
+# ============ الإعدادات المباشرة ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 4000))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 2500))
+# شروط مرنة جداً لضمان ظهور العملات الحية مباشرة على الداشبورد
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 2000))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 1000))
 
-TRENDING_REFRESH_SECONDS = 45
-TX_POLL_SECONDS = float(os.environ.get("TX_POLL_SECONDS", 5))
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 5))
 MAX_ALERTS_STORED = 300
-ALERT_COOLDOWN_SECONDS = 120
+ALERT_COOLDOWN_SECONDS = 60
 
-app = FastAPI(title="Multi-Wallet Accumulation Tracker")
+app = FastAPI(title="Live Real-Time Market Feed Tracker")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -43,78 +43,66 @@ def send_telegram_alert(message: str):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
             "parse_mode": "Markdown"
-        }, timeout=10)
+        }, timeout=8)
     except Exception:
         pass
 
 
-def get_latest_dex_pairs():
-    tokens = []
-    endpoints = [
-        "https://api.dexscreener.com/token-boosts/latest/v1",
-        "https://api.dexscreener.com/token-profiles/latest/v1"
+def get_live_market_pairs():
+    """جلب أحدث أزواج التداول الحية مباشرة من السوق"""
+    pairs_list = []
+    # نعتمد على البحث العام أو الروابط المباشرة لأحدث الأزواج النشطة
+    urls = [
+        "https://api.dexscreener.com/latest/dex/search?q=SOL",
+        "https://api.dexscreener.com/latest/dex/search?q=ETH",
+        "https://api.dexscreener.com/latest/dex/search?q=USDT"
     ]
-    for ep in endpoints:
+    
+    for url in urls:
         try:
-            r = requests.get(ep, timeout=8)
+            r = requests.get(url, timeout=8)
             if r.status_code == 200:
                 data = r.json()
-                for item in data if isinstance(data, list) else []:
-                    c_id, t_addr = item.get("chainId"), item.get("tokenAddress")
-                    if c_id and t_addr:
-                        tokens.append((c_id, t_addr))
+                items = data.get("pairs", [])
+                if isinstance(items, list):
+                    pairs_list.extend(items)
         except Exception:
             pass
 
+    # تصفية الأزواج المتكررة حسب العنوان
     seen, unique = set(), []
-    for k in tokens:
-        if k not in seen:
-            seen.add(k)
-            unique.append(k)
+    for p in pairs_list:
+        base_addr = p.get("baseToken", {}).get("address")
+        if base_addr and base_addr not in seen:
+            seen.add(base_addr)
+            unique.append(p)
+    
     return unique
 
 
-def get_pairs_data_batch(token_addresses):
-    if not token_addresses:
-        return {}
-    addresses_str = ",".join(token_addresses[:35])
-    url = f"https://api.dexscreener.com/latest/dex/tokens/{addresses_str}"
-    results = {}
-    try:
-        r = requests.get(url, timeout=8)
-        if r.status_code == 200:
-            pairs = r.json().get("pairs") or []
-            for p in pairs:
-                base_addr = p.get("baseToken", {}).get("address")
-                if base_addr:
-                    curr_liq = p.get("liquidity", {}).get("usd", 0) or 0
-                    if base_addr not in results or curr_liq > (results[base_addr].get("liquidity", {}).get("usd", 0) or 0):
-                        results[base_addr] = p
-    except Exception:
-        pass
-    return results
-
-
-def analyze_multi_wallet_accumulation(chain_id, token_address, pair_data):
-    if not pair_data:
+def analyze_and_push(pair):
+    if not pair:
         return
 
-    liq = float(pair_data.get("liquidity", {}).get("usd", 0) or 0)
+    chain_id = pair.get("chainId", "unknown")
+    token_address = pair.get("baseToken", {}).get("address", "")
+    if not token_address:
+        return
+
+    liq = float(pair.get("liquidity", {}).get("usd", 0) or 0)
     if liq < MIN_LIQUIDITY_USD:
         return
 
-    txns = pair_data.get("txns", {})
-    h1_buys = txns.get("buys", {}).get("h1", 0) or 0
-    h1_sells = txns.get("sells", {}).get("h1", 0) or 0
-    h1_vol = pair_data.get("volume", {}).get("h1", 0) or 0
-
+    h1_vol = float(pair.get("volume", {}).get("h1", 0) or 0)
     if h1_vol < MIN_VOLUME_USD:
         return
 
-    # الشرط الاحترافي: عمليات شراء قوية من عدة محافظ (شراء عالي مقارنة بالبيع واحتفاظ)
-    is_strong_accumulation = (h1_buys >= h1_sells * 1.5) and (h1_buys >= 5)
+    txns = pair.get("txns", {})
+    h1_buys = txns.get("buys", {}).get("h1", 0) or 0
+    h1_sells = txns.get("sells", {}).get("h1", 0) or 0
 
-    if not is_strong_accumulation:
+    # شرط تجميع ومشترين نشطين
+    if h1_buys < h1_sells and h1_buys < 3:
         return
 
     now = time.time()
@@ -122,13 +110,13 @@ def analyze_multi_wallet_accumulation(chain_id, token_address, pair_data):
         return
     last_alert_time[token_address] = now
 
-    symbol = pair_data.get("baseToken", {}).get("symbol", "?")
-    price = pair_data.get("priceUsd", "?")
-    mcap = pair_data.get("fdv", pair_data.get("marketCap", "?"))
-    pair_url = pair_data.get("url", "")
+    symbol = pair.get("baseToken", {}).get("symbol", "?")
+    price = pair.get("priceUsd", "?")
+    mcap = pair.get("fdv", pair.get("marketCap", "?"))
+    pair_url = pair.get("url", "")
 
     entry = {
-        "type": "multi_wallet_accumulation",
+        "type": "live_accumulation",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -140,19 +128,18 @@ def analyze_multi_wallet_accumulation(chain_id, token_address, pair_data):
         "buys": h1_buys,
         "sells": h1_sells,
         "url": pair_url,
-        "safety": f"🛡️ سيولة آمنة (${liq:,.0f})",
+        "safety": f"🛡️ سيولة (${liq:,.0f})",
         "strength": float(h1_vol)
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
     msg = (
-        f"🐋 *Multi-Wallet Accumulation* [{chain_id.upper()}]\n"
-        f"العملة: *{symbol}* (شراء قوي واحتفاظ)\n"
+        f"⚡ *Live Accumulation* [{chain_id.upper()}]\n"
+        f"العملة: *{symbol}*\n"
         f"العقد: `{token_address}`\n"
-        f"العمليات (شراء/بيع 1h): {h1_buys} شراﺀ / {h1_sells} بيع\n"
-        f"حجم التداول: ${h1_vol:,.0f}\n"
-        f"السعر: ${price}\n"
+        f"شراء/بيع (1h): {h1_buys} / {h1_sells}\n"
+        f"الحجم: ${h1_vol:,.0f} | السعر: ${price}\n"
         f"Liquidity: ${liq:,.0f}\n"
         f"{pair_url}"
     )
@@ -160,32 +147,15 @@ def analyze_multi_wallet_accumulation(chain_id, token_address, pair_data):
 
 
 async def scanner_loop():
-    trending = []
-    last_refresh = 0
     while True:
-        now = time.time()
-        if now - last_refresh >= TRENDING_REFRESH_SECONDS:
-            trending = await asyncio.to_thread(get_latest_dex_pairs)
-            last_refresh = now
-
-        if trending:
-            chunk_size = 35
-            for i in range(0, len(trending), chunk_size):
-                chunk = trending[i:i + chunk_size]
-                token_addresses = [item[1] for item in chunk]
-                
-                pairs_dict = await asyncio.to_thread(get_pairs_data_batch, token_addresses)
-
-                for chain_id, token_address in chunk:
-                    pair_data = pairs_dict.get(token_address)
-                    if pair_data:
-                        await asyncio.to_thread(analyze_multi_wallet_accumulation, chain_id, token_address, pair_data)
-                        stats["scanned_tokens"] += 1
-
-                await asyncio.sleep(1.0)
-
+        pairs = await asyncio.to_thread(get_live_market_pairs)
+        if pairs:
+            for p in pairs:
+                await asyncio.to_thread(analyze_and_push, p)
+                stats["scanned_tokens"] += 1
+            
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
-        await asyncio.sleep(TX_POLL_SECONDS)
+        await asyncio.sleep(POLL_SECONDS)
 
 
 @app.on_event("startup")
