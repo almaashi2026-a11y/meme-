@@ -1,18 +1,12 @@
 """
-Smart Money Tracker - Dashboard Edition
-تطبيق واحد: يشغّل المسح التلقائي بالخلفية (كل السلاسل) + يعرض داشبورد
-مباشر على الويب + يبعث تنبيهات تلقرام. كله بخدمة واحدة عشان يشتغل صح
-على Render Web Service (مو Background Worker).
+Smart Money & Pump Tracker - Dashboard Edition
+تطبيق متكامل: مسح تلقائي للخلفية للعملات + رصد البمب لحظياً + صفقات الحيتان + داشبورد ويب + تنبيهات تليجرام.
 
 المتطلبات:
     pip install fastapi uvicorn requests
 
 التشغيل محلياً:
     uvicorn app:app --host 0.0.0.0 --port 8000
-
-النشر على Render:
-    نوع الخدمة: Web Service
-    Start command: uvicorn app:app --host 0.0.0.0 --port $PORT
 """
 
 import asyncio
@@ -33,13 +27,13 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 WHALE_BUY_THRESHOLD_USD = float(os.environ.get("WHALE_BUY_THRESHOLD_USD", 5000))
 TRENDING_REFRESH_SECONDS = 120
-TX_POLL_SECONDS = float(os.environ.get("TX_POLL_SECONDS", 10))  # كل كم ثانية نعيد فحص العملات (أسرع = كشف أبكر)
+TX_POLL_SECONDS = float(os.environ.get("TX_POLL_SECONDS", 5))  # فحص سريع كل 5 ثوانٍ
 MAX_ALERTS_STORED = 300
 
-# إعدادات كشف البمب (ارتفاع سعر مفاجئ) - مضبوطة للسرعة عشان بمبات الميم كوين قصيرة
-PUMP_WINDOW_SECONDS = float(os.environ.get("PUMP_WINDOW_SECONDS", 60))        # نافذة المراقبة (دقيقة وحدة افتراضياً)
-PUMP_THRESHOLD_PERCENT = float(os.environ.get("PUMP_THRESHOLD_PERCENT", 8))   # نسبة الارتفاع اللي تعتبر بمب
-PUMP_ALERT_COOLDOWN_SECONDS = float(os.environ.get("PUMP_ALERT_COOLDOWN_SECONDS", 180))  # ما نكرر تنبيه نفس العملة قبل هالمدة
+# إعدادات كشف البمب (ارتفاع سعر مفاجئ)
+PUMP_WINDOW_SECONDS = float(os.environ.get("PUMP_WINDOW_SECONDS", 60))        # نافذة المراقبة (دقيقة)
+PUMP_THRESHOLD_PERCENT = float(os.environ.get("PUMP_THRESHOLD_PERCENT", 8))   # نسبة الصعود لاعتبارها بمب
+PUMP_ALERT_COOLDOWN_SECONDS = float(os.environ.get("PUMP_ALERT_COOLDOWN_SECONDS", 180)) # منع تكرار التنبيه
 
 EVM_CHAINS = {
     "ethereum": {"api_base": "https://api.etherscan.io/api", "api_key_env": "ETHERSCAN_API_KEY"},
@@ -50,14 +44,14 @@ EVM_CHAINS = {
 
 # ============ حالة مشتركة (بالذاكرة) ============
 
-alerts_feed = deque(maxlen=MAX_ALERTS_STORED)  # آخر التنبيهات المكتشفة
+alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 seen_tx_ids = set()
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
 
 price_history = {}   # token_address -> deque[(timestamp, price)]
-pump_last_alert = {}  # token_address -> آخر وقت انبعث فيه تنبيه بمب لهالعملة
+pump_last_alert = {}  # token_address -> آخر وقت انبعث فيه تنبيه بمب
 
-app = FastAPI(title="Smart Money Tracker")
+app = FastAPI(title="Smart Money & Pump Tracker")
 
 
 # ============ أدوات مساعدة ============
@@ -181,7 +175,6 @@ def record_alert(chain_id, wallet, pair_data, usd_value):
 
 
 def check_pump(chain_id, token_address, pair_data):
-    """يراقب سعر العملة عبر الوقت، ولو ارتفع فوق النسبة المحددة خلال النافذة الزمنية يبعث تنبيه بمب."""
     if not pair_data:
         return
     try:
@@ -195,7 +188,6 @@ def check_pump(chain_id, token_address, pair_data):
     hist = price_history.setdefault(token_address, deque())
     hist.append((now, price))
 
-    # نشيل النقاط الأقدم من نافذة المراقبة
     while hist and now - hist[0][0] > PUMP_WINDOW_SECONDS:
         hist.popleft()
 
@@ -212,7 +204,7 @@ def check_pump(chain_id, token_address, pair_data):
 
     last_alert = pump_last_alert.get(token_address, 0)
     if now - last_alert < PUMP_ALERT_COOLDOWN_SECONDS:
-        return  # تنبهنا لهالعملة قريب، نتجنب التكرار
+        return
 
     pump_last_alert[token_address] = now
     record_pump_alert(chain_id, pair_data, change_pct)
@@ -241,10 +233,7 @@ def record_pump_alert(chain_id, pair_data, change_pct):
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
-    if PUMP_WINDOW_SECONDS < 60:
-        window_label = f"{int(PUMP_WINDOW_SECONDS)} ثانية"
-    else:
-        window_label = f"{int(PUMP_WINDOW_SECONDS // 60)} دقيقة"
+    window_label = f"{int(PUMP_WINDOW_SECONDS)} ثانية" if PUMP_WINDOW_SECONDS < 60 else f"{int(PUMP_WINDOW_SECONDS // 60)} دقيقة"
 
     msg = (
         f"🚀 *Pump Detected* [{chain_id.upper()}]\n"
@@ -258,7 +247,7 @@ def record_pump_alert(chain_id, pair_data, change_pct):
     send_telegram_alert(msg)
 
 
-# ============ فحص التحويلات حسب نوع السلسلة ============
+# ============ فحص التحويلات ============
 
 def check_solana_token(token_address, pair_data):
     url = "https://public-api.solscan.io/token/transfer"
@@ -333,7 +322,7 @@ def check_tron_token(token_address, pair_data):
             record_alert("tron", tx.get("to_address"), pair_data, usd_value)
 
 
-# ============ حلقة المسح بالخلفية ============
+# ============ حلقة المسح الخلفية ============
 
 async def scanner_loop():
     trending = []
@@ -367,7 +356,7 @@ async def startup_event():
     asyncio.create_task(scanner_loop())
 
 
-# ============ API + الداشبورد ============
+# ============ مسارات الـ API والداشبورد ============
 
 @app.get("/api/alerts")
 def api_alerts():
