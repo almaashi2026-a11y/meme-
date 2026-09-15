@@ -1,6 +1,6 @@
 """
-Instant Trending & High Volume Flow Tracker
-رصد فوري وسريع لأكثر العملات تفاعلاً وحجم تداول في السوق
+Omni-Chain Smart Accumulation & Strong Buy Tracker
+مسح شامل لجميع سلاسل البلوكتشين ورصد تدفق الشراء القوي
 """
 
 import asyncio
@@ -14,20 +14,19 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ الإعدادات المباشرة الفورية ============
+# ============ إعدادات المسح الشامل لجميع السلاسل ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط مرنة جداً لضمان امتلاء الداشبورد بالنتائج فوراً
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1000))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 500))
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 2500))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 1000))
 
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 8))
-MAX_ALERTS_STORED = 300
-ALERT_COOLDOWN_SECONDS = 30
+MAX_ALERTS_STORED = 400
+ALERT_COOLDOWN_SECONDS = 60
 
-app = FastAPI(title="Instant Trending Flow Tracker")
+app = FastAPI(title="Omni-Chain Strong Buy Tracker")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -43,44 +42,55 @@ def send_telegram_alert(message: str):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
             "parse_mode": "Markdown"
-        }, timeout=6)
+        }, timeout=8)
     except Exception:
         pass
 
 
-def get_instant_trending_pairs():
-    """جلب أزواج العملات الأكثر تفاعلاً ورواجاً في السوق لحظياً"""
+def get_omni_chain_market_pairs():
+    """جلب أزواج العملات والترندات من جميع سلاسل السوق بلا استثناء"""
     pairs_list = []
     
-    # نقطة النهاية الرسمية للعملات الأكثر رواجاً ونشاطاً
-    url = "https://api.dexscreener.com/latest/dex/search?q=trending"
-    try:
-        r = requests.get(url, timeout=6)
-        if r.status_code == 200:
-            data = r.json()
-            items = data.get("pairs", [])
-            if isinstance(items, list):
-                pairs_list.extend(items)
-    except Exception:
-        pass
+    # استعلامات متنوعة لأهم الكلمات والرموز لجلب أوسع نطاق ممكن عبر كل الشبكات
+    search_terms = [
+        "SOL", "ETH", "BSC", "ARB", "BASE", "POL", "AVAX", "FTM", 
+        "PEPE", "DOGE", "SHIB", "AI", "MEME", "CAT", "PUMP", "MOON", "INU", "USD"
+    ]
+    
+    for term in search_terms:
+        url = f"https://api.dexscreener.com/latest/dex/search?q={term}"
+        try:
+            r = requests.get(url, timeout=4)
+            if r.status_code == 200:
+                data = r.json()
+                items = data.get("pairs", [])
+                if isinstance(items, list):
+                    pairs_list.extend(items)
+        except Exception:
+            pass
 
-    # إذا كانت النتائج قليلة، نجلب أحدث الـ Boosts المتاحة كدعم إضافي
-    try:
-        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=6)
-        if r2.status_code == 200:
-            boosts = r2.json()
-            if isinstance(boosts, list):
-                addresses = [b.get("tokenAddress") for b in boosts[:15] if b.get("tokenAddress")]
-                if addresses:
-                    r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=6)
-                    if r3.status_code == 200:
-                        p_data = r3.json().get("pairs", [])
-                        if isinstance(p_data, list):
-                            pairs_list.extend(p_data)
-    except Exception:
-        pass
+    # جلب أحدث الـ Boosts والـ Profiles عبر كل الشبكات
+    endpoints = [
+        "https://api.dexscreener.com/token-boosts/latest/v1",
+        "https://api.dexscreener.com/token-profiles/latest/v1"
+    ]
+    for ep in endpoints:
+        try:
+            r = requests.get(ep, timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    addresses = [item.get("tokenAddress") for item in data if item.get("tokenAddress")]
+                    if addresses:
+                        r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses[:30])}", timeout=5)
+                        if r_tokens.status_code == 200:
+                            p_data = r_tokens.json().get("pairs", [])
+                            if isinstance(p_data, list):
+                                pairs_list.extend(p_data)
+        except Exception:
+            pass
 
-    # إزالة التكرار بناءً على عنوان العقد
+    # إزالة التكرار بدقة عالية بناءً على عنوان العقد
     seen, unique = set(), []
     for p in pairs_list:
         base_addr = p.get("baseToken", {}).get("address")
@@ -91,11 +101,12 @@ def get_instant_trending_pairs():
     return unique
 
 
-def analyze_and_push_instant(pair):
+def analyze_omni_chain(pair):
     if not pair:
         return
 
-    chain_id = pair.get("chainId", "unknown")
+    # دعم أي سلسلة بلوكتشين في العالم دون استثناء
+    chain_id = pair.get("chainId", "unknown").upper()
     token_address = pair.get("baseToken", {}).get("address", "")
     if not token_address:
         return
@@ -112,6 +123,10 @@ def analyze_and_push_instant(pair):
     h1_buys = txns.get("buys", {}).get("h1", 0) or 0
     h1_sells = txns.get("sells", {}).get("h1", 0) or 0
 
+    # شرط الشراء القوي (المشترين يغلبون البائعين بوضوح)
+    if h1_buys < h1_sells * 1.3 or h1_buys < 4:
+        return
+
     now = time.time()
     if now - last_alert_time.get(token_address, 0) < ALERT_COOLDOWN_SECONDS:
         return
@@ -123,12 +138,13 @@ def analyze_and_push_instant(pair):
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
 
-    status_text = f"🔥 نشط [شراء: {h1_buys} | بيع: {h1_sells}]"
+    buy_ratio = (h1_buys / max(h1_sells, 1))
+    status_text = f"🌐 تدفق سيولة هائل [شراء: {h1_buys} | بيع: {h1_sells}] - نسبة {buy_ratio:.1f}x"
 
     entry = {
-        "type": "instant_trending",
+        "type": "omni_chain_flow",
         "time": datetime.now(timezone.utc).isoformat(),
-        "chain": chain_id.upper(),
+        "chain": chain_id,
         "symbol": symbol,
         "name": name,
         "token_address": token_address,
@@ -140,16 +156,16 @@ def analyze_and_push_instant(pair):
         "sells": h1_sells,
         "url": pair_url,
         "safety": status_text,
-        "strength": float(h1_vol)
+        "strength": float(h1_vol * buy_ratio)
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
     msg = (
-        f"⚡ *رصد سيولة نشطة* [{chain_id.upper()}]\n"
+        f"🚀 *رصد شراء قوي عبر السلاسل* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
-        f"الحركة: {status_text}\n"
+        f"الحالة: {status_text}\n"
         f"الحجم (1h): ${h1_vol:,.0f} | السيولة: ${liq_usd:,.0f}\n"
         f"السعر: ${price}\n"
         f"{pair_url}"
@@ -159,10 +175,10 @@ def analyze_and_push_instant(pair):
 
 async def scanner_loop():
     while True:
-        pairs = await asyncio.to_thread(get_instant_trending_pairs)
+        pairs = await asyncio.to_thread(get_omni_chain_market_pairs)
         if pairs:
             for p in pairs:
-                await asyncio.to_thread(analyze_and_push_instant, p)
+                await asyncio.to_thread(analyze_omni_chain, p)
                 stats["scanned_tokens"] += 1
             
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
