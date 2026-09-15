@@ -1,6 +1,6 @@
 """
-First-Spark True Pre-Launch Radar (Zero-Delay Edition)
-رصد حقيقي قبل الانفجار وفي اللحظة الأولى تماماً لتدفق السيولة على جميع السلاسل
+Multi-Chain Whale & Heavy Buy Pre-Launch Radar (Zero-Delay Edition)
+رصد شامل لكل السلاسل لاصطياد صفقات الحيتان والشراء القوي جداً في قاع الشرارة الأولى
 """
 
 import asyncio
@@ -14,19 +14,19 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ إعدادات رصد ما قبل الانفجار والشرارة الصافية ============
+# ============ إعدادات رصد صفقات الحيتان والشراء القوي ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 500))   # الحد الأدنى للسيولة في البداية
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 100))    # الحد الأدنى لتأكيد بداية ضخ الحجم
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 800))    # سيولة أولية تضمن الحد الأدنى للأمان
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 300))     # حجم تداول مبكر يؤكد دخول السيولة
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 2.5))        # فحص أسرع لتجنب أي تأخير
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 2.0))         # فحص لحظي وسريع جداً
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 120
+ALERT_COOLDOWN_SECONDS = 90
 
-app = FastAPI(title="True Pre-Launch Spark Radar")
+app = FastAPI(title="Multi-Chain Whale & Heavy Buy Radar")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -47,10 +47,10 @@ def send_telegram_alert(message: str):
         pass
 
 
-def get_pre_launch_pairs():
+def get_all_chains_whale_pairs():
     pairs_list = []
-    # استعلامات شاملة لكل السلاسل لاصطياد أحدث العقود والسيولة الناشئة
-    queries = ["pump", "sol", "base", "ai", "meme", "inu", "pepe", "cat", "doge", "eth", "bsc", "new"]
+    # تغطية شاملة لجميع السلاسل والكلمات المفتاحية للسيولة الجديدة والحيتان
+    queries = ["sol", "base", "pump", "bsc", "eth", "arbitrum", "polygon", "ai", "meme", "inu", "pepe", "cat", "doge", "new"]
     for q in queries:
         url = f"https://api.dexscreener.com/latest/dex/search?q={q}"
         try:
@@ -63,12 +63,13 @@ def get_pre_launch_pairs():
         except Exception:
             pass
 
+    # جلب أحدث التعزيزات والعقود النشطة عبر جميع الشبكات
     try:
         r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=3)
         if r2.status_code == 200:
             boosts = r2.json()
             if isinstance(boosts, list):
-                addresses = [b.get("tokenAddress") for b in boosts[:40] if b.get("tokenAddress")]
+                addresses = [b.get("tokenAddress") for b in boosts[:50] if b.get("tokenAddress")]
                 if addresses:
                     r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=3)
                     if r3.status_code == 200:
@@ -88,7 +89,7 @@ def get_pre_launch_pairs():
     return unique
 
 
-def analyze_pre_launch(pair):
+def analyze_whale_accumulation(pair):
     if not pair:
         return
 
@@ -114,19 +115,19 @@ def analyze_pre_launch(pair):
     m5_change = float(price_change.get("m5", 0) or 0)
 
     # =========================================================
-    # استراتيجية "قبل الانفجار مباشرة" (True Pre-Launch / Zero Spark)
+    # معايير قنص الحيتان والشراء القوي جداً قبل الانفجار الكبير
     # =========================================================
-    # 1. منع رصد العملات المتأخرة: السعر لم يتحرك بعد بقوة (بين 0.2% و 12% فقط في أول 5 دقائق)
-    if m5_change < 0.2 or m5_change > 12.0:
+    # 1. نطاق السعر مبكر جداً (بين 0.5% و 15% فقط في الـ 5 دقائق الأولى لتجنب التأخير)
+    if m5_change < 0.5 or m5_change > 15.0:
         return
 
-    # 2. التأكد من أن صفقات الشراء بدأت تشتعل وتسيطر تماماً على الدقائق الأولى (بدون بيع يذكر)
+    # 2. التأكد من قوة المعاملات وهيمنة الحيتان / المشترين
     total_txns = m5_buys + m5_sells
-    if total_txns < 3:
+    if total_txns < 4:
         return
     
     buy_ratio = m5_buys / total_txns
-    if buy_ratio < 0.80:  # يجب أن يكون حجم صفقات الشراء 80% فأكثر (هجوم شرائي بحت في البداية)
+    if buy_ratio < 0.82:  # نسبة شراء شرسة لا تقل عن 82% (تدل على دخول حيتان بصمت)
         return
 
     now = time.time()
@@ -140,10 +141,10 @@ def analyze_pre_launch(pair):
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
 
-    status_text = f"🚀 [قنص قاع الشرارة] صعود مبكر: +{m5_change:.1f}% | شراء: {m5_buys} مقابل بيع: {m5_sells}"
+    status_text = f"🐋 [تجميع حيتان وشراء قوي] صعود 5د: +{m5_change:.1f}% | شراء: {m5_buys} | بيع: {m5_sells}"
 
     entry = {
-        "type": "pre_launch_spark",
+        "type": "whale_accumulation",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -163,7 +164,7 @@ def analyze_pre_launch(pair):
     stats["alerts_total"] += 1
 
     msg = (
-        f"🎯 *رصد قبل الانفجار (الشرارة الأولى)* [{chain_id}]\n"
+        f"🚨 *رصد تجميع حيتان وشراء قوي جداً* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
         f"الحالة: {status_text}\n"
@@ -177,10 +178,10 @@ def analyze_pre_launch(pair):
 async def scanner_loop():
     while True:
         try:
-            pairs = await asyncio.to_thread(get_pre_launch_pairs)
+            pairs = await asyncio.to_thread(get_all_chains_whale_pairs)
             if pairs:
                 for p in pairs:
-                    await asyncio.to_thread(analyze_pre_launch, p)
+                    await asyncio.to_thread(analyze_whale_accumulation, p)
                     stats["scanned_tokens"] += 1
                 
             stats["last_scan"] = datetime.now(timezone.utc).isoformat()
