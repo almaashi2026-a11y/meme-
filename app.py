@@ -1,6 +1,6 @@
 """
-Smart Pro Wallet Accumulation & Early Entry Radar
-رصد احترافي متقدم لدخول المحافظ والسيولة في بداية العقود عبر جميع السلاسل
+First-Spark Precision Radar (First Candle Entry Edition)
+رصد دقيق وصارم لالتقاط العملة في الشمعة الأولى فور انطلاقها دون أي تأخير
 """
 
 import asyncio
@@ -14,22 +14,22 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ إعدادات الرصد الاحترافي للمحافظ ============
+# ============ إعدادات اصطياد الشمعة الأولى ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط متوازنة لضمان جودة السيولة وعدم الدخول في عملات ميتة
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1500))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 600))
+# سيولة معقولة لتجنب العملات الميتة جداً
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1000))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 300))
 
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 3))
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 60
+ALERT_COOLDOWN_SECONDS = 90  # منع تكرار التنبيه لنفس العملة لفترة كافية
 
-app = FastAPI(title="Smart Wallet Accumulation Radar")
+app = FastAPI(title="First-Spark Precision Radar")
 
-alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
+alerts_feed = deque(maxlen=MAXALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
 last_alert_time = {}
 
@@ -48,8 +48,8 @@ def send_telegram_alert(message: str):
         pass
 
 
-def get_smart_wallet_pairs():
-    """جلب أزواج العملات والتوكنات النشطة التي تتعرض لضخ سيولة جديد"""
+def get_first_spark_pairs():
+    """جلب الأزواج النشطة والجديدة عبر جميع السلاسل للبحث عن الشرارة الأولى"""
     pairs_list = []
     
     queries = ["pump", "sol", "base", "ai", "meme", "inu", "pepe", "cat", "doge", "eth"]
@@ -65,13 +65,13 @@ def get_smart_wallet_pairs():
         except Exception:
             pass
 
-    # إضافة أحدث الـ Boosts لالتقاط المشاريع الجديدة فور طرحها
+    # إضافة أحدث الـ Boosts لالتقاط المشاريع فور طرحها
     try:
         r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=4)
         if r2.status_code == 200:
             boosts = r2.json()
             if isinstance(boosts, list):
-                addresses = [b.get("tokenAddress") for b in boosts[:30] if b.get("tokenAddress")]
+                addresses = [b.get("tokenAddress") for b in boosts[:35] if b.get("tokenAddress")]
                 if addresses:
                     r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=4)
                     if r3.status_code == 200:
@@ -79,7 +79,7 @@ def get_smart_wallet_pairs():
                         if isinstance(p_data, list):
                             pairs_list.extend(p_data)
     except Exception:
-                        pass
+        pass
 
     seen, unique = set(), []
     for p in pairs_list:
@@ -91,7 +91,7 @@ def get_smart_wallet_pairs():
     return unique
 
 
-def analyze_smart_wallet_entry(pair):
+def analyze_first_spark(pair):
     if not pair:
         return
 
@@ -108,22 +108,25 @@ def analyze_smart_wallet_entry(pair):
     if h1_vol < MIN_VOLUME_USD:
         return
 
-    # نسب التغير السعري (لمنع الدخول في القمم المتأخرة)
+    # الفحص الدقيق للتغير السعري (نستهدف البداية فقط: الصعود بين 1% و 25% كحد أقصى)
+    # أي عملة صاعدة بأكثر من 25% تُستبعد فوراً لكي لا نأتي بعد الانفجار
     price_change = pair.get("priceChange", {})
     h1_change = float(price_change.get("h1", 0) or 0)
     m5_change = float(price_change.get("m5", 0) or 0)
 
-    # القاعدة الذهبية للاحتراف: الصعود يجب أن يكون في بدايته (بين 1.5% إلى 35% فقط)
-    # أي عملة صاعدة بأكثر من 35% في الساعة تُستبعد تماماً لتفادي الهبوط والقمم.
-    if h1_change < 1.5 or h1_change > 35.0:
+    if h1_change < 1.0 or h1_change > 25.0:
         return
 
     txns = pair.get("txns", {})
+    m5 = txns.get("m5", {})
+    m5_buys = m5.get("buys", 0) or 0
+    m5_sells = m5.get("sells", 0) or 0
+
     h1_buys = txns.get("buys", {}).get("h1", 0) or 0
     h1_sells = txns.get("sells", {}).get("h1", 0) or 0
 
-    # اشتراط تفوق واضح للمشترين (ضغط شراء المحافظ)
-    if h1_buys < h1_sells * 1.5 or h1_buys < 5:
+    # شرط الشرارة الأولى: تفوق المشترين في آخر 5 دقائق أو بداية ضغط شراء نظيف
+    if m5_buys < m5_sells and h1_buys < h1_sells * 1.3:
         return
 
     now = time.time()
@@ -137,10 +140,10 @@ def analyze_smart_wallet_entry(pair):
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
 
-    status_text = f"🐋 رصد دخول محافظ [صعود: +{h1_change:.1f}%] (شراء: {h1_buys} | بيع: {h1_sells})"
+    status_text = f"⚡ الشرارة الأولى [صعود: +{h1_change:.1f}%] (5m شراء: {m5_buys} | بيع: {m5_sells})"
 
     entry = {
-        "type": "smart_wallet_entry",
+        "type": "first_spark",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -160,7 +163,7 @@ def analyze_smart_wallet_entry(pair):
     stats["alerts_total"] += 1
 
     msg = (
-        f"🎯 *رصد دخول محافظ مبكر* [{chain_id}]\n"
+        f"🎯 *رصد الشرارة الأولى للإنطلاق* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
         f"الحالة: {status_text}\n"
@@ -173,10 +176,10 @@ def analyze_smart_wallet_entry(pair):
 
 async def scanner_loop():
     while True:
-        pairs = await asyncio.to_thread(get_smart_wallet_pairs)
+        pairs = await asyncio.to_thread(get_first_spark_pairs)
         if pairs:
             for p in pairs:
-                await asyncio.to_thread(analyze_smart_wallet_entry, p)
+                await asyncio.to_thread(analyze_first_spark, p)
                 stats["scanned_tokens"] += 1
             
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
