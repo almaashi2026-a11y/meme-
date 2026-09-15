@@ -19,17 +19,16 @@ from fastapi.staticfiles import StaticFiles
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# سيولة معقولة لتجنب العملات الميتة جداً
 MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1000))
 MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 300))
 
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 3))
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 90  # منع تكرار التنبيه لنفس العملة لفترة كافية
+ALERT_COOLDOWN_SECONDS = 90
 
 app = FastAPI(title="First-Spark Precision Radar")
 
-alerts_feed = deque(maxlen=MAXALERTS_STORED)
+alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
 last_alert_time = {}
 
@@ -49,9 +48,7 @@ def send_telegram_alert(message: str):
 
 
 def get_first_spark_pairs():
-    """جلب الأزواج النشطة والجديدة عبر جميع السلاسل للبحث عن الشرارة الأولى"""
     pairs_list = []
-    
     queries = ["pump", "sol", "base", "ai", "meme", "inu", "pepe", "cat", "doge", "eth"]
     for q in queries:
         url = f"https://api.dexscreener.com/latest/dex/search?q={q}"
@@ -65,7 +62,6 @@ def get_first_spark_pairs():
         except Exception:
             pass
 
-    # إضافة أحدث الـ Boosts لالتقاط المشاريع فور طرحها
     try:
         r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=4)
         if r2.status_code == 200:
@@ -108,11 +104,8 @@ def analyze_first_spark(pair):
     if h1_vol < MIN_VOLUME_USD:
         return
 
-    # الفحص الدقيق للتغير السعري (نستهدف البداية فقط: الصعود بين 1% و 25% كحد أقصى)
-    # أي عملة صاعدة بأكثر من 25% تُستبعد فوراً لكي لا نأتي بعد الانفجار
     price_change = pair.get("priceChange", {})
     h1_change = float(price_change.get("h1", 0) or 0)
-    m5_change = float(price_change.get("m5", 0) or 0)
 
     if h1_change < 1.0 or h1_change > 25.0:
         return
@@ -125,7 +118,6 @@ def analyze_first_spark(pair):
     h1_buys = txns.get("buys", {}).get("h1", 0) or 0
     h1_sells = txns.get("sells", {}).get("h1", 0) or 0
 
-    # شرط الشرارة الأولى: تفوق المشترين في آخر 5 دقائق أو بداية ضغط شراء نظيف
     if m5_buys < m5_sells and h1_buys < h1_sells * 1.3:
         return
 
