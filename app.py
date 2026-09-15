@@ -1,6 +1,6 @@
 """
-First-Spark Precision Radar (Heavy Buy Volume & Multi-Chain Edition)
-رصد صارم واحترافي لاصطياد العملات عند الشرارة الأولى والشراء القوي على جميع السلاسل
+First-Spark True Pre-Launch Radar (Zero-Delay Edition)
+رصد حقيقي قبل الانفجار وفي اللحظة الأولى تماماً لتدفق السيولة على جميع السلاسل
 """
 
 import asyncio
@@ -14,19 +14,19 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ إعدادات اصطياد الشمعة الأولى والشراء القوي ============
+# ============ إعدادات رصد ما قبل الانفجار والشرارة الصافية ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1000))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 300))
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 500))   # الحد الأدنى للسيولة في البداية
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 100))    # الحد الأدنى لتأكيد بداية ضخ الحجم
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 3))
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 2.5))        # فحص أسرع لتجنب أي تأخير
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 90
+ALERT_COOLDOWN_SECONDS = 120
 
-app = FastAPI(title="First-Spark Heavy Buy Radar")
+app = FastAPI(title="True Pre-Launch Spark Radar")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -47,14 +47,14 @@ def send_telegram_alert(message: str):
         pass
 
 
-def get_first_spark_pairs():
+def get_pre_launch_pairs():
     pairs_list = []
-    # استعلامات واسعة وشاملة لتغطية كافة السلاسل والرموز اللحظية
-    queries = ["pump", "sol", "base", "ai", "meme", "inu", "pepe", "cat", "doge", "eth", "bsc"]
+    # استعلامات شاملة لكل السلاسل لاصطياد أحدث العقود والسيولة الناشئة
+    queries = ["pump", "sol", "base", "ai", "meme", "inu", "pepe", "cat", "doge", "eth", "bsc", "new"]
     for q in queries:
         url = f"https://api.dexscreener.com/latest/dex/search?q={q}"
         try:
-            r = requests.get(url, timeout=4)
+            r = requests.get(url, timeout=3)
             if r.status_code == 200:
                 data = r.json()
                 items = data.get("pairs", [])
@@ -64,13 +64,13 @@ def get_first_spark_pairs():
             pass
 
     try:
-        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=4)
+        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=3)
         if r2.status_code == 200:
             boosts = r2.json()
             if isinstance(boosts, list):
-                addresses = [b.get("tokenAddress") for b in boosts[:35] if b.get("tokenAddress")]
+                addresses = [b.get("tokenAddress") for b in boosts[:40] if b.get("tokenAddress")]
                 if addresses:
-                    r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=4)
+                    r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=3)
                     if r3.status_code == 200:
                         p_data = r3.json().get("pairs", [])
                         if isinstance(p_data, list):
@@ -88,7 +88,7 @@ def get_first_spark_pairs():
     return unique
 
 
-def analyze_first_spark(pair):
+def analyze_pre_launch(pair):
     if not pair:
         return
 
@@ -113,16 +113,20 @@ def analyze_first_spark(pair):
     price_change = pair.get("priceChange", {})
     m5_change = float(price_change.get("m5", 0) or 0)
 
-    # شروط الشراء القوي والشرارة المبكرة (تجنب التأخير والتركيز على ضخ السيولة)
-    if m5_change < 5.0 or m5_change > 60.0:
+    # =========================================================
+    # استراتيجية "قبل الانفجار مباشرة" (True Pre-Launch / Zero Spark)
+    # =========================================================
+    # 1. منع رصد العملات المتأخرة: السعر لم يتحرك بعد بقوة (بين 0.2% و 12% فقط في أول 5 دقائق)
+    if m5_change < 0.2 or m5_change > 12.0:
         return
 
+    # 2. التأكد من أن صفقات الشراء بدأت تشتعل وتسيطر تماماً على الدقائق الأولى (بدون بيع يذكر)
     total_txns = m5_buys + m5_sells
-    if total_txns < 5:
+    if total_txns < 3:
         return
     
     buy_ratio = m5_buys / total_txns
-    if buy_ratio < 0.75:  # هيمنة الشراء بنسبة 75% فأكثر
+    if buy_ratio < 0.80:  # يجب أن يكون حجم صفقات الشراء 80% فأكثر (هجوم شرائي بحت في البداية)
         return
 
     now = time.time()
@@ -136,10 +140,10 @@ def analyze_first_spark(pair):
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
 
-    status_text = f"🚨 شراء قوي جداً [صعود 5م: +{m5_change:.1f}%] (نسبة الشراء: {buy_ratio*100:.0f}% | شراء: {m5_buys} - بيع: {m5_sells})"
+    status_text = f"🚀 [قنص قاع الشرارة] صعود مبكر: +{m5_change:.1f}% | شراء: {m5_buys} مقابل بيع: {m5_sells}"
 
     entry = {
-        "type": "heavy_buy_spark",
+        "type": "pre_launch_spark",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -159,7 +163,7 @@ def analyze_first_spark(pair):
     stats["alerts_total"] += 1
 
     msg = (
-        f"🔥 *رصد شراء قوي واختراق مبكر* [{chain_id}]\n"
+        f"🎯 *رصد قبل الانفجار (الشرارة الأولى)* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
         f"الحالة: {status_text}\n"
@@ -173,10 +177,10 @@ def analyze_first_spark(pair):
 async def scanner_loop():
     while True:
         try:
-            pairs = await asyncio.to_thread(get_first_spark_pairs)
+            pairs = await asyncio.to_thread(get_pre_launch_pairs)
             if pairs:
                 for p in pairs:
-                    await asyncio.to_thread(analyze_first_spark, p)
+                    await asyncio.to_thread(analyze_pre_launch, p)
                     stats["scanned_tokens"] += 1
                 
             stats["last_scan"] = datetime.now(timezone.utc).isoformat()
