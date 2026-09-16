@@ -1,6 +1,6 @@
 """
-Omni-Chain Real-Time New Pairs Radar
-رصد فوري لحظي لجميع الشبكات واصطياد العملات فور انطلاقها والشمعة الأولى
+Zero-Delay Raw Spark Radar (Direct Pool Monitoring)
+رصد أحدث أزواج السيولة الخام لحظياً وبدون أي تأخير يذكر
 """
 
 import asyncio
@@ -14,19 +14,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ إعدادات الشمولية لجميع الشبكات ============
+# ============ إعدادات الرصد الصفرية بدون تأخير ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 300))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 50))
+# شروط أولية منخفضة جداً للقبض على العملة في ثوانيها الأولى
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 200))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 30))
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.5))
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))  # فحص سريع جداً كل ثانية
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 180
+ALERT_COOLDOWN_SECONDS = 240
 
-app = FastAPI(title="Omni-Chain Real-Time Radar")
+app = FastAPI(title="Zero-Delay Raw Spark Radar")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -42,61 +43,44 @@ def send_telegram_alert(message: str):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
             "parse_mode": "Markdown"
-        }, timeout=4)
+        }, timeout=3)
     except Exception:
         pass
 
 
-def get_omni_chain_new_pairs():
-    """جلب أحدث العملات والملفات والبوستات لجميع الشبكات عالمياً"""
+def get_raw_latest_pools():
+    """جلب أحدث أزواج السيولة الخام مباشرة عبر عدة قنوات بحثية متسارعة"""
     pairs_list = []
     
-    # 1. أحدث الـ Token Profiles عبر جميع الشبكات
+    # 1. البحث المباشر عن الكلمات والرموز الأكثر تداولا لحظياً لسرعة التحديث
+    hot_terms = ["sol", "pump", "usdt", "eth", "base", "ai", "meme", "doge", "cat", "pepe", "bsc", "arb"]
+    for term in hot_terms:
+        try:
+            r = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={term}", timeout=2.5)
+            if r.status_code == 200:
+                data = r.json()
+                items = data.get("pairs", [])
+                if isinstance(items, list):
+                    # نأخذ أحدث النتائج الخام المعروضة
+                    pairs_list.extend(items[:25])
+        except Exception:
+            pass
+
+    # 2. دمج أحدث الـ Token Profiles كدعم إضافي
     try:
-        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=3)
-        if r.status_code == 200:
-            profiles = r.json()
+        r_prof = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=2.5)
+        if r_prof.status_code == 200:
+            profiles = r_prof.json()
             if isinstance(profiles, list):
-                addresses = [p.get("tokenAddress") for p in profiles[:50] if p.get("tokenAddress")]
-                if addresses:
-                    r_tok = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=3)
-                    if r_tok.status_code == 200:
-                        items = r_tok.json().get("pairs", [])
+                addrs = [p.get("tokenAddress") for p in profiles[:25] if p.get("tokenAddress")]
+                if addrs:
+                    r_t = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs)}", timeout=2.5)
+                    if r_t.status_code == 200:
+                        items = r_t.json().get("pairs", [])
                         if isinstance(items, list):
                             pairs_list.extend(items)
     except Exception:
         pass
-
-    # 2. أحدث الـ Token Boosts عبر جميع الشبكات
-    try:
-        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=3)
-        if r2.status_code == 200:
-            boosts = r2.json()
-            if isinstance(boosts, list):
-                addresses = [b.get("tokenAddress") for b in boosts[:50] if b.get("tokenAddress")]
-                if addresses:
-                    r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=3)
-                    if r3.status_code == 200:
-                        p_data = r3.json().get("pairs", [])
-                        if isinstance(p_data, list):
-                            pairs_list.extend(p_data)
-    except Exception:
-        pass
-
-    # 3. تغطية شاملة لجميع الشبكات عبر استعلامات متعددة ومتنوعة
-    omni_queries = [
-        "solana", "base", "ethereum", "bsc", "arbitrum", 
-        "polygon", "avalanche", "sui", "optimism", "pump", "inu", "pepe", "ai"
-    ]
-    for q in omni_queries:
-        try:
-            r_q = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={q}", timeout=3)
-            if r_q.status_code == 200:
-                items = r_q.json().get("pairs", [])
-                if isinstance(items, list):
-                    pairs_list.extend(items[:15])
-        except Exception:
-            pass
 
     seen, unique = set(), []
     for p in pairs_list:
@@ -108,7 +92,7 @@ def get_omni_chain_new_pairs():
     return unique
 
 
-def analyze_omni_pair(pair):
+def analyze_raw_pair(pair):
     if not pair:
         return
 
@@ -128,7 +112,9 @@ def analyze_omni_pair(pair):
     price_change = pair.get("priceChange", {})
     h1_change = float(price_change.get("h1", 0) or 0)
 
-    if h1_change > 150.0:
+    # فلتر الاحتراف للقبض على بداية الانفجار فقط وعدم التأخر في القمم العالية
+    # نستهدف العملات التي في بداية صعودها (بين 0% إلى 80% كحد أقصى)
+    if h1_change < -5.0 or h1_change > 80.0:
         return
 
     txns = pair.get("txns", {})
@@ -147,10 +133,10 @@ def analyze_omni_pair(pair):
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
 
-    status_text = f"🌐 رصد شامل لجميع الشبكات [1h: +{h1_change:.1f}%] (شراء 5m: {m5_buys})"
+    status_text = f"⚡ رصد الانطلاقة الأولى [1h: +{h1_change:.1f}%] (شراء 5m: {m5_buys})"
 
     entry = {
-        "type": "omni_spark",
+        "type": "raw_spark",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -170,7 +156,7 @@ def analyze_omni_pair(pair):
     stats["alerts_total"] += 1
 
     msg = (
-        f"🎯 *رصد عملة جديدة [شبكة: {chain_id}]*\n"
+        f"🎯 *رصد الشرارة المبكرة* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
         f"الحالة: {status_text}\n"
@@ -183,10 +169,10 @@ def analyze_omni_pair(pair):
 
 async def scanner_loop():
     while True:
-        pairs = await asyncio.to_thread(get_omni_chain_new_pairs)
+        pairs = await asyncio.to_thread(get_raw_latest_pools)
         if pairs:
             for p in pairs:
-                await asyncio.to_thread(analyze_omni_pair, p)
+                await asyncio.to_thread(analyze_raw_pair, p)
                 stats["scanned_tokens"] += 1
             
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
