@@ -1,6 +1,6 @@
 """
-Zero-Delay Raw Spark Radar (Direct Pool Monitoring)
-رصد أحدث أزواج السيولة الخام لحظياً وبدون أي تأخير يذكر
+Zero-Hour Birth Radar (Pre-Pump Omni-Chain Scanner)
+رصد ولادة العملات وتأسيسها على جميع السلاسل لحظياً قبل أي صعود أو ارتفاع
 """
 
 import asyncio
@@ -14,20 +14,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ إعدادات الرصد الصفرية بدون تأخير ============
+# ============ إعدادات رصد الولادة المبكرة الصفرية ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط أولية منخفضة جداً للقبض على العملة في ثوانيها الأولى
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 200))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 30))
+# شروط منخفضة جداً لاصطياد العملة في ثوانيها الأولى قبل تحرك السوق
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 100))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 10))
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))  # فحص سريع جداً كل ثانية
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 240
+ALERT_COOLDOWN_SECONDS = 300  # منع التكرار لنفس العقد
 
-app = FastAPI(title="Zero-Delay Raw Spark Radar")
+app = FastAPI(title="Zero-Hour Birth Radar")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -48,39 +48,56 @@ def send_telegram_alert(message: str):
         pass
 
 
-def get_raw_latest_pools():
-    """جلب أحدث أزواج السيولة الخام مباشرة عبر عدة قنوات بحثية متسارعة"""
+def get_birth_pairs_omni():
+    """جلب أحدث العقود فور إضافتها لجميع السلاسل عالمياً دون أي تأخير"""
     pairs_list = []
     
-    # 1. البحث المباشر عن الكلمات والرموز الأكثر تداولا لحظياً لسرعة التحديث
-    hot_terms = ["sol", "pump", "usdt", "eth", "base", "ai", "meme", "doge", "cat", "pepe", "bsc", "arb"]
-    for term in hot_terms:
-        try:
-            r = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={term}", timeout=2.5)
-            if r.status_code == 200:
-                data = r.json()
-                items = data.get("pairs", [])
-                if isinstance(items, list):
-                    # نأخذ أحدث النتائج الخام المعروضة
-                    pairs_list.extend(items[:25])
-        except Exception:
-            pass
-
-    # 2. دمج أحدث الـ Token Profiles كدعم إضافي
+    # 1. أحدث الـ Token Profiles (أحدث العقود المسجلة في البلوكتشين)
     try:
-        r_prof = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=2.5)
-        if r_prof.status_code == 200:
-            profiles = r_prof.json()
+        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=2.5)
+        if r.status_code == 200:
+            profiles = r.json()
             if isinstance(profiles, list):
-                addrs = [p.get("tokenAddress") for p in profiles[:25] if p.get("tokenAddress")]
-                if addrs:
-                    r_t = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs)}", timeout=2.5)
-                    if r_t.status_code == 200:
-                        items = r_t.json().get("pairs", [])
+                addresses = [p.get("tokenAddress") for p in profiles[:60] if p.get("tokenAddress")]
+                if addresses:
+                    r_tok = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=2.5)
+                    if r_tok.status_code == 200:
+                        items = r_tok.json().get("pairs", [])
                         if isinstance(items, list):
                             pairs_list.extend(items)
     except Exception:
         pass
+
+    # 2. أحدث الـ Token Boosts اللحظية
+    try:
+        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=2.5)
+        if r2.status_code == 200:
+            boosts = r2.json()
+            if isinstance(boosts, list):
+                addresses = [b.get("tokenAddress") for b in boosts[:60] if b.get("tokenAddress")]
+                if addresses:
+                    r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=2.5)
+                    if r3.status_code == 200:
+                        p_data = r3.json().get("pairs", [])
+                        if isinstance(p_data, list):
+                            pairs_list.extend(p_data)
+    except Exception:
+        pass
+
+    # 3. تغطية موسعة جداً لجميع الكلمات والميمز والشبكات الشائعة
+    chains_or_keywords = [
+        "solana", "base", "ethereum", "bsc", "arbitrum", "polygon", 
+        "avalanche", "sui", "optimism", "pump", "meme", "ai", "inu", "pepe"
+    ]
+    for kw in chains_or_keywords:
+        try:
+            r_q = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={kw}", timeout=2.0)
+            if r_q.status_code == 200:
+                items = r_q.json().get("pairs", [])
+                if isinstance(items, list):
+                    pairs_list.extend(items[:20])
+        except Exception:
+            pass
 
     seen, unique = set(), []
     for p in pairs_list:
@@ -92,7 +109,7 @@ def get_raw_latest_pools():
     return unique
 
 
-def analyze_raw_pair(pair):
+def analyze_birth_pair(pair):
     if not pair:
         return
 
@@ -112,9 +129,8 @@ def analyze_raw_pair(pair):
     price_change = pair.get("priceChange", {})
     h1_change = float(price_change.get("h1", 0) or 0)
 
-    # فلتر الاحتراف للقبض على بداية الانفجار فقط وعدم التأخر في القمم العالية
-    # نستهدف العملات التي في بداية صعودها (بين 0% إلى 80% كحد أقصى)
-    if h1_change < -5.0 or h1_change > 80.0:
+    # 🌟 اللمسة الفنية الصفرية: لا نضع أي قيد على الارتفاع، بل نستهدف العملات الجديدة كلياً حتى لو لم تتحرك بعد (أو في بدايتها الصفرية)
+    if h1_change > 200.0:  # نستبعد فقط ما صعد بشكل جنوني مسبقاً
         return
 
     txns = pair.get("txns", {})
@@ -133,10 +149,10 @@ def analyze_raw_pair(pair):
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
 
-    status_text = f"⚡ رصد الانطلاقة الأولى [1h: +{h1_change:.1f}%] (شراء 5m: {m5_buys})"
+    status_text = f"🥚 رصد ولادة مبكرة [1h: {h1_change:+.1f}%] (شراء 5m: {m5_buys})"
 
     entry = {
-        "type": "raw_spark",
+        "type": "birth_spark",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -150,17 +166,17 @@ def analyze_raw_pair(pair):
         "sells": m5_sells,
         "url": pair_url,
         "safety": status_text,
-        "strength": float(h1_vol * (1 + h1_change))
+        "strength": float(liq_usd + h1_vol)  # الأولوية للسيولة المبكرة
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
     msg = (
-        f"🎯 *رصد الشرارة المبكرة* [{chain_id}]\n"
+        f"🥚 *رصد عقد جديد (لحظة الولادة)* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
         f"الحالة: {status_text}\n"
-        f"الحجم: ${h1_vol:,.0f} | السيولة: ${liq_usd:,.0f}\n"
+        f"السيولة: ${liq_usd:,.0f} | الحجم: ${h1_vol:,.0f}\n"
         f"السعر: ${price}\n"
         f"{pair_url}"
     )
@@ -169,10 +185,10 @@ def analyze_raw_pair(pair):
 
 async def scanner_loop():
     while True:
-        pairs = await asyncio.to_thread(get_raw_latest_pools)
+        pairs = await asyncio.to_thread(get_birth_pairs_omni)
         if pairs:
             for p in pairs:
-                await asyncio.to_thread(analyze_raw_pair, p)
+                await asyncio.to_thread(analyze_birth_pair, p)
                 stats["scanned_tokens"] += 1
             
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
