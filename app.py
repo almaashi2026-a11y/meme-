@@ -1,6 +1,6 @@
 """
-Hyper-Speed Zero-Lag Omni-Chain Radar
-رصد فائق السرعة وبدون أي تأخير لجميع العقود لحظة ولادتها على البلوكتشين
+Elite True Zero-Lag Omni-Chain Sniper
+رصد الصفقات والسيولة القوية مباشرة فور تأسيس العقد على جميع السلاسل
 """
 
 import asyncio
@@ -14,21 +14,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ إعدادات السرعة القصوى (بدون تأخير) ============
+# ============ الإعدادات الاحترافية القصوى ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط مرنة للغاية لضمان عدم ضياع أي فرصة مبكرة
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 50))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 10))
+# شروط سيولة حقيقية وقوية جداً لاستبعاد العملات الميتة أو الوهمية
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 3000))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 500))
 
-# سرعة فحص خارقة كل نصف ثانية فقط!
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.5))
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 180
+ALERT_COOLDOWN_SECONDS = 300
 
-app = FastAPI(title="Hyper-Speed Zero-Lag Radar")
+app = FastAPI(title="Elite True Zero-Lag Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -44,40 +43,43 @@ def send_telegram_alert(message: str):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
             "parse_mode": "Markdown"
-        }, timeout=2)
+        }, timeout=3)
     except Exception:
         pass
 
 
-def get_hyper_speed_pairs():
-    """جلب أحدث الأزواج بأقصى سرعة ممكنة عبر مصادر متعددة بالتوازي"""
+def get_elite_raw_pairs():
+    """جلب أحدث أزواج التداول والسيولة مباشرة عبر عدة مسارات متوازية لتفادي التأخير"""
     pairs_list = []
     
-    # 1. أحدث الـ Token Profiles مباشرة
+    # 1. جلب أحدث الـ Token Profiles الخام
     try:
-        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=1.5)
+        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=2)
         if r.status_code == 200:
             profiles = r.json()
             if isinstance(profiles, list):
                 addresses = [p.get("tokenAddress") for p in profiles[:80] if p.get("tokenAddress")]
                 if addresses:
-                    r_tok = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses[:30])}", timeout=1.5)
-                    if r_tok.status_code == 200:
-                        items = r_tok.json().get("pairs", [])
-                        if isinstance(items, list):
-                            pairs_list.extend(items)
+                    # تقسيم الطلبات لضمان السرعة القصوى وعدم حصول Timeout
+                    for i in range(0, len(addresses), 25):
+                        chunk = addresses[i:i+25]
+                        r_tok = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(chunk)}", timeout=2)
+                        if r_tok.status_code == 200:
+                            items = r_tok.json().get("pairs", [])
+                            if isinstance(items, list):
+                                pairs_list.extend(items)
     except Exception:
         pass
 
-    # 2. أحدث الـ Token Boosts مباشرة
+    # 2. جلب أحدث الـ Boosts السريعة
     try:
-        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=1.5)
+        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=2)
         if r2.status_code == 200:
             boosts = r2.json()
             if isinstance(boosts, list):
-                addresses = [b.get("tokenAddress") for b in boosts[:80] if b.get("tokenAddress")]
+                addresses = [b.get("tokenAddress") for b in boosts[:50] if b.get("tokenAddress")]
                 if addresses:
-                    r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses[:30])}", timeout=1.5)
+                    r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=2)
                     if r3.status_code == 200:
                         p_data = r3.json().get("pairs", [])
                         if isinstance(p_data, list):
@@ -85,15 +87,15 @@ def get_hyper_speed_pairs():
     except Exception:
         pass
 
-    # 3. استعلامات سريعة جداً لأحدث الكلمات الدالة في كل السلاسل
-    quick_queries = ["sol", "base", "eth", "pump", "ai", "meme", "pepe", "doge", "bsc", "sui"]
-    for q in quick_queries:
+    # 3. تغطية أحدث الرموز الأكثر تفاعلاً على جميع السلاسل
+    hot_keywords = ["sol", "base", "eth", "bsc", "pump", "ai", "meme", "pepe", "sui", "arb", "doge"]
+    for kw in hot_keywords:
         try:
-            rq = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={q}", timeout=1.5)
+            rq = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={kw}", timeout=2)
             if rq.status_code == 200:
                 items = rq.json().get("pairs", [])
                 if isinstance(items, list):
-                    pairs_list.extend(items[:15])
+                    pairs_list.extend(items[:20])
         except Exception:
             pass
 
@@ -107,7 +109,7 @@ def get_hyper_speed_pairs():
     return unique
 
 
-def analyze_hyper_pair(pair):
+def analyze_elite_pair(pair):
     if not pair:
         return
 
@@ -116,6 +118,7 @@ def analyze_hyper_pair(pair):
     if not token_address:
         return
 
+    # اشتراط سيولة قوية وحقيقية تمنع دخول العملات الضعيفة
     liq_usd = float(pair.get("liquidity", {}).get("usd", 0) or 0)
     if liq_usd < MIN_LIQUIDITY_USD:
         return
@@ -127,8 +130,8 @@ def analyze_hyper_pair(pair):
     price_change = pair.get("priceChange", {})
     h1_change = float(price_change.get("h1", 0) or 0)
 
-    # إلغاء قيود الصعود الصارمة لكي نلتقط العملة قبل أن يتحدث السعر ويطير
-    if h1_change > 300.0:
+    # القاعدة الاحترافية: العملة في مرحلة التأسيس المبكرة جداً (أقل من 35% صعود) لضمان عدم تفويت الانطلاقة
+    if h1_change > 35.0:
         return
 
     now = time.time()
@@ -142,10 +145,10 @@ def analyze_hyper_pair(pair):
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
 
-    status_text = f"⚡ رصد فائق السرعة [1h: {h1_change:+.1f}%] [سيولة: ${liq_usd:,.0f}]"
+    status_text = f"💎 قنص سيولة قوية ومبكرة [السيولة: ${liq_usd:,.0f}] [1h: {h1_change:+.1f}%]"
 
     entry = {
-        "type": "hyper_spark",
+        "type": "elite_sniper",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -163,7 +166,7 @@ def analyze_hyper_pair(pair):
     stats["alerts_total"] += 1
 
     msg = (
-        f"🚀 *رصد قنص فائق السرعة* [{chain_id}]\n"
+        f"🎯 *قنص احترافي (سيولة قوية)* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
         f"الحالة: {status_text}\n"
@@ -175,10 +178,10 @@ def analyze_hyper_pair(pair):
 
 async def scanner_loop():
     while True:
-        pairs = await asyncio.to_thread(get_hyper_speed_pairs)
+        pairs = await asyncio.to_thread(get_elite_raw_pairs)
         if pairs:
             for p in pairs:
-                await asyncio.to_thread(analyze_hyper_pair, p)
+                await asyncio.to_thread(analyze_elite_pair, p)
                 stats["scanned_tokens"] += 1
             
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
