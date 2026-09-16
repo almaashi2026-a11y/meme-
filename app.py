@@ -1,6 +1,6 @@
 """
-Multi-Chain Whale & Heavy Buy Pre-Launch Radar (Zero-Delay Edition)
-رصد شامل لكل السلاسل لاصطياد صفقات الحيتان والشراء القوي جداً في قاع الشرارة الأولى
+Ultra-Precision New Pairs & First Spark Radar
+رصد مباشر لأحدث الأزواج المنشأة على الشبكات واصطياد الشرارة الأولى فوراً
 """
 
 import asyncio
@@ -14,19 +14,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ إعدادات رصد صفقات الحيتان والشراء القوي ============
+# ============ الإعدادات الاحترافية ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 800))    # سيولة أولية تضمن الحد الأدنى للأمان
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 300))     # حجم تداول مبكر يؤكد دخول السيولة
+# شروط مرنة للعملات الجديدة جداً
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 500))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 100))
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 2.0))         # فحص لحظي وسريع جداً
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 2))
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 90
+ALERT_COOLDOWN_SECONDS = 120
 
-app = FastAPI(title="Multi-Chain Whale & Heavy Buy Radar")
+app = FastAPI(title="Ultra-Precision New Pairs Radar")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -47,37 +48,52 @@ def send_telegram_alert(message: str):
         pass
 
 
-def get_all_chains_whale_pairs():
+def get_latest_pairs_directly():
+    """جلب أحدث العقود والأزواج المنشأة لحظياً من أكثر من مصدر في DexScreener"""
     pairs_list = []
-    # تغطية شاملة لجميع السلاسل والكلمات المفتاحية للسيولة الجديدة والحيتان
-    queries = ["sol", "base", "pump", "bsc", "eth", "arbitrum", "polygon", "ai", "meme", "inu", "pepe", "cat", "doge", "new"]
-    for q in queries:
-        url = f"https://api.dexscreener.com/latest/dex/search?q={q}"
-        try:
-            r = requests.get(url, timeout=3)
-            if r.status_code == 200:
-                data = r.json()
-                items = data.get("pairs", [])
-                if isinstance(items, list):
-                    pairs_list.extend(items)
-        except Exception:
-            pass
-
-    # جلب أحدث التعزيزات والعقود النشطة عبر جميع الشبكات
+    
+    # 1. جلب أحدث الـ Token Profiles (أحدث العملات المضافة)
     try:
-        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=3)
+        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=4)
+        if r.status_code == 200:
+            profiles = r.json()
+            if isinstance(profiles, list):
+                addresses = [p.get("tokenAddress") for p in profiles[:30] if p.get("tokenAddress")]
+                if addresses:
+                    r_tok = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=4)
+                    if r_tok.status_code == 200:
+                        items = r_tok.json().get("pairs", [])
+                        if isinstance(items, list):
+                            pairs_list.extend(items)
+    except Exception:
+        pass
+
+    # 2. جلب أحدث الـ Boosts
+    try:
+        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=4)
         if r2.status_code == 200:
             boosts = r2.json()
             if isinstance(boosts, list):
-                addresses = [b.get("tokenAddress") for b in boosts[:50] if b.get("tokenAddress")]
+                addresses = [b.get("tokenAddress") for b in boosts[:30] if b.get("tokenAddress")]
                 if addresses:
-                    r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=3)
+                    r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=4)
                     if r3.status_code == 200:
                         p_data = r3.json().get("pairs", [])
                         if isinstance(p_data, list):
                             pairs_list.extend(p_data)
     except Exception:
         pass
+
+    # 3. جلب الـ Latest Transactions / Search واسعة لنوعيات الميم والريل تايم
+    for q in ["solana", "base", "eth", "pump", "usdt"]:
+        try:
+            r_q = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={q}", timeout=4)
+            if r_q.status_code == 200:
+                items = r_q.json().get("pairs", [])
+                if isinstance(items, list):
+                    pairs_list.extend(items[:20])
+        except Exception:
+            pass
 
     seen, unique = set(), []
     for p in pairs_list:
@@ -89,7 +105,7 @@ def get_all_chains_whale_pairs():
     return unique
 
 
-def analyze_whale_accumulation(pair):
+def analyze_pair_pro(pair):
     if not pair:
         return
 
@@ -102,32 +118,25 @@ def analyze_whale_accumulation(pair):
     if liq_usd < MIN_LIQUIDITY_USD:
         return
 
+    h1_vol = float(pair.get("volume", {}).get("h1", 0) or 0)
+    if h1_vol < MIN_VOLUME_USD:
+        return
+
+    price_change = pair.get("priceChange", {})
+    h1_change = float(price_change.get("h1", 0) or 0)
+    m5_change = float(price_change.get("m5", 0) or 0)
+
+    # فلتر البداية النظيفة: العملة بدأت تتحرك (بين 0.5% إلى 50% فقط) لمنع القمم
+    if h1_change < 0.5 or h1_change > 50.0:
+        return
+
     txns = pair.get("txns", {})
     m5 = txns.get("m5", {})
     m5_buys = m5.get("buys", 0) or 0
     m5_sells = m5.get("sells", 0) or 0
-    
-    m5_vol = float(pair.get("volume", {}).get("m5", 0) or 0)
-    if m5_vol < MIN_VOLUME_USD:
-        return
 
-    price_change = pair.get("priceChange", {})
-    m5_change = float(price_change.get("m5", 0) or 0)
-
-    # =========================================================
-    # معايير قنص الحيتان والشراء القوي جداً قبل الانفجار الكبير
-    # =========================================================
-    # 1. نطاق السعر مبكر جداً (بين 0.5% و 15% فقط في الـ 5 دقائق الأولى لتجنب التأخير)
-    if m5_change < 0.5 or m5_change > 15.0:
-        return
-
-    # 2. التأكد من قوة المعاملات وهيمنة الحيتان / المشترين
-    total_txns = m5_buys + m5_sells
-    if total_txns < 4:
-        return
-    
-    buy_ratio = m5_buys / total_txns
-    if buy_ratio < 0.82:  # نسبة شراء شرسة لا تقل عن 82% (تدل على دخول حيتان بصمت)
+    # اشتراط حركة شرائية نشطة في آخر 5 دقائق
+    if m5_buys < m5_sells:
         return
 
     now = time.time()
@@ -141,10 +150,10 @@ def analyze_whale_accumulation(pair):
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
 
-    status_text = f"🐋 [تجميع حيتان وشراء قوي] صعود 5د: +{m5_change:.1f}% | شراء: {m5_buys} | بيع: {m5_sells}"
+    status_text = f"🚀 رصد أول شمعة [1h: +{h1_change:.1f}%] [5m شراء: {m5_buys} / بيع: {m5_sells}]"
 
     entry = {
-        "type": "whale_accumulation",
+        "type": "new_pair_spark",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -153,22 +162,22 @@ def analyze_whale_accumulation(pair):
         "price": price,
         "mcap": mcap,
         "liquidity": liq_usd,
-        "volume": m5_vol,
+        "volume": h1_vol,
         "buys": m5_buys,
         "sells": m5_sells,
         "url": pair_url,
         "safety": status_text,
-        "strength": float(m5_vol * buy_ratio * (1 + m5_change))
+        "strength": float(h1_vol * (1 + h1_change))
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
     msg = (
-        f"🚨 *رصد تجميع حيتان وشراء قوي جداً* [{chain_id}]\n"
+        f"🎯 *فرصة بداية انطلاق* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
         f"الحالة: {status_text}\n"
-        f"حجم 5د: ${m5_vol:,.0f} | السيولة: ${liq_usd:,.0f}\n"
+        f"الحجم: ${h1_vol:,.0f} | السيولة: ${liq_usd:,.0f}\n"
         f"السعر: ${price}\n"
         f"{pair_url}"
     )
@@ -177,16 +186,13 @@ def analyze_whale_accumulation(pair):
 
 async def scanner_loop():
     while True:
-        try:
-            pairs = await asyncio.to_thread(get_all_chains_whale_pairs)
-            if pairs:
-                for p in pairs:
-                    await asyncio.to_thread(analyze_whale_accumulation, p)
-                    stats["scanned_tokens"] += 1
-                
-            stats["last_scan"] = datetime.now(timezone.utc).isoformat()
-        except Exception:
-            pass
+        pairs = await asyncio.to_thread(get_latest_pairs_directly)
+        if pairs:
+            for p in pairs:
+                await asyncio.to_thread(analyze_pair_pro, p)
+                stats["scanned_tokens"] += 1
+            
+        stats["last_scan"] = datetime.now(timezone.utc).isoformat()
         await asyncio.sleep(POLL_SECONDS)
 
 
@@ -206,5 +212,4 @@ def dashboard():
     return FileResponse("static/index.html")
 
 
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory="static"), name="static")
