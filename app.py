@@ -1,6 +1,6 @@
 """
-Zero-Hour Birth Radar (Pre-Pump Omni-Chain Scanner)
-رصد ولادة العملات وتأسيسها على جميع السلاسل لحظياً قبل أي صعود أو ارتفاع
+Instant Volume & Pump Surge Radar (Zero-Lag Edition)
+رصد الانفجارات السعرية وحجم التداول اللحظي لجميع السلاسل قبل اختفاء الحركة
 """
 
 import asyncio
@@ -14,20 +14,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ إعدادات رصد الولادة المبكرة الصفرية ============
+# ============ الإعدادات الاحترافية لترصد الانفجار اللحظي ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط منخفضة جداً لاصطياد العملة في ثوانيها الأولى قبل تحرك السوق
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 100))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 10))
+# شروط تضمن أن العملة تشهد سيولة وحركة حقيقية وليست ميتة
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 500))
+MIN_VOLUME_5M = float(os.environ.get("MIN_VOLUME_5M", 500))  # تركيز على حجم آخر 5 دقائق
 
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 300  # منع التكرار لنفس العقد
+ALERT_COOLDOWN_SECONDS = 120
 
-app = FastAPI(title="Zero-Hour Birth Radar")
+app = FastAPI(title="Instant Volume Surge Radar")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -48,54 +48,24 @@ def send_telegram_alert(message: str):
         pass
 
 
-def get_birth_pairs_omni():
-    """جلب أحدث العقود فور إضافتها لجميع السلاسل عالمياً دون أي تأخير"""
+def get_instant_surge_pairs():
+    """جلب الأزواج التي تشهد نشاطاً غير طبيعي في اللحظة الحالية عبر استعلامات شاملة"""
     pairs_list = []
     
-    # 1. أحدث الـ Token Profiles (أحدث العقود المسجلة في البلوكتشين)
-    try:
-        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=2.5)
-        if r.status_code == 200:
-            profiles = r.json()
-            if isinstance(profiles, list):
-                addresses = [p.get("tokenAddress") for p in profiles[:60] if p.get("tokenAddress")]
-                if addresses:
-                    r_tok = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=2.5)
-                    if r_tok.status_code == 200:
-                        items = r_tok.json().get("pairs", [])
-                        if isinstance(items, list):
-                            pairs_list.extend(items)
-    except Exception:
-        pass
-
-    # 2. أحدث الـ Token Boosts اللحظية
-    try:
-        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=2.5)
-        if r2.status_code == 200:
-            boosts = r2.json()
-            if isinstance(boosts, list):
-                addresses = [b.get("tokenAddress") for b in boosts[:60] if b.get("tokenAddress")]
-                if addresses:
-                    r3 = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addresses)}", timeout=2.5)
-                    if r3.status_code == 200:
-                        p_data = r3.json().get("pairs", [])
-                        if isinstance(p_data, list):
-                            pairs_list.extend(p_data)
-    except Exception:
-        pass
-
-    # 3. تغطية موسعة جداً لجميع الكلمات والميمز والشبكات الشائعة
-    chains_or_keywords = [
-        "solana", "base", "ethereum", "bsc", "arbitrum", "polygon", 
-        "avalanche", "sui", "optimism", "pump", "meme", "ai", "inu", "pepe"
+    # شبكات وكلمات مفتاحية تغطي أحدث السيولات النشطة لحظياً
+    active_queries = [
+        "solana", "base", "ethereum", "bsc", "pump", 
+        "ai", "meme", "pepe", "doge", "cat", "sol", "eth", "usdt"
     ]
-    for kw in chains_or_keywords:
+    
+    for q in active_queries:
         try:
-            r_q = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={kw}", timeout=2.0)
-            if r_q.status_code == 200:
-                items = r_q.json().get("pairs", [])
+            r = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={q}", timeout=2.5)
+            if r.status_code == 200:
+                data = r.json()
+                items = data.get("pairs", [])
                 if isinstance(items, list):
-                    pairs_list.extend(items[:20])
+                    pairs_list.extend(items[:30])
         except Exception:
             pass
 
@@ -109,7 +79,7 @@ def get_birth_pairs_omni():
     return unique
 
 
-def analyze_birth_pair(pair):
+def analyze_surge_pair(pair):
     if not pair:
         return
 
@@ -122,21 +92,30 @@ def analyze_birth_pair(pair):
     if liq_usd < MIN_LIQUIDITY_USD:
         return
 
-    h1_vol = float(pair.get("volume", {}).get("h1", 0) or 0)
-    if h1_vol < MIN_VOLUME_USD:
+    # فحص حجم التداول والزخم في آخر 5 دقائق (أقوى مؤشر للبمب السريع)
+    volume = pair.get("volume", {})
+    m5_vol = float(volume.get("m5", 0) or 0)
+    h1_vol = float(volume.get("h1", 0) or 0)
+    
+    if m5_vol < MIN_VOLUME_5M:
         return
 
     price_change = pair.get("priceChange", {})
+    m5_change = float(price_change.get("m5", 0) or 0)
     h1_change = float(price_change.get("h1", 0) or 0)
 
-    # 🌟 اللمسة الفنية الصفرية: لا نضع أي قيد على الارتفاع، بل نستهدف العملات الجديدة كلياً حتى لو لم تتحرك بعد (أو في بدايتها الصفرية)
-    if h1_change > 200.0:  # نستبعد فقط ما صعد بشكل جنوني مسبقاً
+    # اشتراط أن تكون العملة في حالة اشتعال سعري (صعود في آخر 5 دقائق وساعة) بدون تأخير للقمم الميتة
+    if m5_change <= 1.0 or h1_change > 300.0:
         return
 
     txns = pair.get("txns", {})
     m5 = txns.get("m5", {})
     m5_buys = m5.get("buys", 0) or 0
     m5_sells = m5.get("sells", 0) or 0
+
+    # سيطرة واضحة لعمليات الشراء في آخر 5 دقائق
+    if m5_buys <= m5_sells:
+        return
 
     now = time.time()
     if now - last_alert_time.get(token_address, 0) < ALERT_COOLDOWN_SECONDS:
@@ -149,10 +128,10 @@ def analyze_birth_pair(pair):
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
 
-    status_text = f"🥚 رصد ولادة مبكرة [1h: {h1_change:+.1f}%] (شراء 5m: {m5_buys})"
+    status_text = f"🔥 بمب لحظي [5m: +{m5_change:.1f}%] [شراء 5m: {m5_buys} / بيع: {m5_sells}]"
 
     entry = {
-        "type": "birth_spark",
+        "type": "surge_spark",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -166,17 +145,17 @@ def analyze_birth_pair(pair):
         "sells": m5_sells,
         "url": pair_url,
         "safety": status_text,
-        "strength": float(liq_usd + h1_vol)  # الأولوية للسيولة المبكرة
+        "strength": float(m5_vol * (1 + m5_change))
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
     msg = (
-        f"🥚 *رصد عقد جديد (لحظة الولادة)* [{chain_id}]\n"
+        f"⚡ *رصد انفجار سيولة لحظي* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
         f"الحالة: {status_text}\n"
-        f"السيولة: ${liq_usd:,.0f} | الحجم: ${h1_vol:,.0f}\n"
+        f"حجم 5 دقائق: ${m5_vol:,.0f} | السيولة: ${liq_usd:,.0f}\n"
         f"السعر: ${price}\n"
         f"{pair_url}"
     )
@@ -185,10 +164,10 @@ def analyze_birth_pair(pair):
 
 async def scanner_loop():
     while True:
-        pairs = await asyncio.to_thread(get_birth_pairs_omni)
+        pairs = await asyncio.to_thread(get_instant_surge_pairs)
         if pairs:
             for p in pairs:
-                await asyncio.to_thread(analyze_birth_pair, p)
+                await asyncio.to_thread(analyze_surge_pair, p)
                 stats["scanned_tokens"] += 1
             
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
