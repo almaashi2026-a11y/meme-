@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 import requests
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles:: StaticFiles if False else StaticFiles  # للضمان النحوي
 from fastapi.staticfiles import StaticFiles
 
 # ============ إعدادات الشمولية لجميع الشبكات ============
@@ -129,7 +128,6 @@ def analyze_omni_pair(pair):
     price_change = pair.get("priceChange", {})
     h1_change = float(price_change.get("h1", 0) or 0)
 
-    # السماح بالعملات الجديدة كلياً بشرط عدم تجاوز حد القمم الكبيرة المتأخرة
     if h1_change > 150.0:
         return
 
