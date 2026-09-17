@@ -1,6 +1,6 @@
 """
-Smart Money & Pump Radar (Unified Ultimate Edition)
-الرادار المدمج الشامل - يعرض النتائج والداشبورد مباشرة بدون أي عوائق
+Smart Money & Pump Radar (Unique Gems Edition)
+الرادار المدمج المصفى - منع التكرار واستبعاد العملات الكبرى والتركيز على الجواهر الحقيقية
 """
 
 import asyncio
@@ -13,18 +13,27 @@ import requests
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 
-# ============ إعدادات الرادار الفوري ============
+# ============ إعدادات التنقية ومنع التكرار ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 50))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 10))
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))
-MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 30
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 500))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 200))
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 3.0))
+MAX_ALERTS_STORED = 100
+ALERT_COOLDOWN_SECONDS = 300  # منع تكرار نفس العملة لمدة 5 دقائق
 
-app = FastAPI(title="Smart Money & Pump Radar")
+# عناوين العملات الكبرى المستبعدة لمنع إغراق الشاشة بها
+IGNORED_TOKENS = {
+    "So11111111111111111111111111111111111111112",  # Native SOL
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", # USDC on Solana
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", # USDT on Solana
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # WETH on Ethereum
+    "0xdac17f958d2ee523a2206206994597c13d831ec7",  # USDT on Ethereum
+}
+
+app = FastAPI(title="Smart Money & Pump Radar - Unique")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -45,44 +54,38 @@ def send_telegram_alert(message: str):
         pass
 
 
-def fetch_all_active_pairs():
+def fetch_unique_gems():
     pairs_list = []
     
-    # 1. جلب الـ Profiles
-    try:
-        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=2)
-        if r.status_code == 200:
-            profiles = r.json()
-            if isinstance(profiles, list):
-                addrs = [p.get("tokenAddress") for p in profiles[:100] if p.get("tokenAddress")]
-                if addrs:
-                    for i in range(0, len(addrs), 30):
-                        chunk = addrs[i:i+30]
-                        rt = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(chunk)}", timeout=2)
-                        if rt.status_code == 200:
-                            items = rt.json().get("pairs", [])
-                            if isinstance(items, list):
-                                pairs_list.extend(items)
-    except Exception:
-        pass
-
-    # 2. بحث شامل بالكلمات الساخنة
-    queries = ["sol", "base", "eth", "bsc", "pump", "ai", "meme", "pepe", "doge", "cat", "sui", "arb"]
+    # استعلامات تركز على عملات الميم والمشاريع الجديدة النشطة
+    queries = [
+        "pump", "sol", "base", "ai", "meme", "pepe", "doge", 
+        "cat", "wif", "bonk", "brett", "mog", "bome", "moon", "inu", "100x"
+    ]
+    
     for q in queries:
         try:
             rq = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={q}", timeout=1.5)
             if rq.status_code == 200:
                 items = rq.json().get("pairs", [])
                 if isinstance(items, list):
-                    pairs_list.extend(items[:25])
+                    pairs_list.extend(items)
         except Exception:
             pass
 
-    seen, unique = set(), []
+    # تصفية وإزالة العملات الكبرى والتكرارات فوراً
+    seen_addresses = set()
+    unique = []
+    
     for p in pairs_list:
-        base_addr = p.get("baseToken", {}).get("address")
-        if base_addr and base_addr not in seen:
-            seen.add(base_addr)
+        base_token = p.get("baseToken", {})
+        token_address = base_token.get("address")
+        
+        if not token_address or token_address in IGNORED_TOKENS:
+            continue
+            
+        if token_address not in seen_addresses:
+            seen_addresses.add(token_address)
             unique.append(p)
             
     return unique
@@ -93,8 +96,10 @@ def analyze_and_push(pair):
         return
 
     chain_id = pair.get("chainId", "unknown").upper()
-    token_address = pair.get("baseToken", {}).get("address", "")
-    if not token_address:
+    base_token = pair.get("baseToken", {})
+    token_address = base_token.get("address", "")
+    
+    if not token_address or token_address in IGNORED_TOKENS:
         return
 
     liq_usd = float(pair.get("liquidity", {}).get("usd", 0) or 0)
@@ -110,13 +115,14 @@ def analyze_and_push(pair):
         return
     last_alert_time[token_address] = now
 
-    symbol = pair.get("baseToken", {}).get("symbol", "?")
-    name = pair.get("baseToken", {}).get("name", "Token")
+    symbol = base_token.get("symbol", "?")
+    name = base_token.get("name", "Token")
     price = pair.get("priceUsd", "?")
     pair_url = pair.get("url", "")
     
     price_change = pair.get("priceChange", {})
     h1_change = float(price_change.get("h1", 0) or 0)
+    h24_change = float(price_change.get("h24", 0) or 0)
 
     entry = {
         "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
@@ -128,17 +134,18 @@ def analyze_and_push(pair):
         "liquidity": liq_usd,
         "volume": h1_vol,
         "h1_change": h1_change,
+        "h24_change": h24_change,
         "url": pair_url,
         "strength": float(liq_usd + h1_vol)
     }
     alerts_feed.appendleft(entry)
-    stats["alerts_total"] += 1
+    stats["alerts_total"] = len(alerts_feed)
 
     msg = (
-        f"🎯 *رصد عملة جديدة* [{chain_id}]\n"
+        f"💎 *فرصة جديدة فريدة* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
-        f"السيولة: ${liq_usd:,.0f} | 1h: {h1_change:+.1f}%\n"
+        f"السيولة: ${liq_usd:,.0f} | 1س: {h1_change:+.1f}%\n"
         f"{pair_url}"
     )
     send_telegram_alert(msg)
@@ -146,7 +153,7 @@ def analyze_and_push(pair):
 
 async def scanner_loop():
     while True:
-        pairs = await asyncio.to_thread(fetch_all_active_pairs)
+        pairs = await asyncio.to_thread(fetch_unique_gems)
         if pairs:
             for p in pairs:
                 stats["scanned_tokens"] += 1
@@ -174,30 +181,32 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Smart Money & Pump Radar - الاحترافي</title>
+    <title>Smart Money & Pump Radar - Unique Gems</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
-        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; }
-        h1 { margin: 0; color: #58a6ff; font-size: 24px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+        h1 { margin: 0; color: #58a6ff; font-size: 22px; }
         .stats { background: #161b22; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; font-size: 14px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
-        .info { display: flex; flex-direction: column; gap: 5px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .info { display: flex; flex-direction: column; gap: 5px; max-width: 75%; }
         .symbol { font-size: 18px; font-weight: bold; color: #3fb950; }
-        .address { font-size: 12px; color: #8b949e; font-family: monospace; }
-        .meta { font-size: 13px; color: #d2a8ff; }
-        .btn { background: #238636; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; }
+        .address { font-size: 12px; color: #8b949e; font-family: monospace; word-break: break-all; }
+        .meta { font-size: 13px; color: #d2a8ff; display: flex; gap: 15px; flex-wrap: wrap; }
+        .btn { background: #238636; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
         .btn:hover { background: #2ea043; }
         .chain-tag { background: #1f6feb; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; display: inline-block; margin-right: 5px; }
+        .positive { color: #3fb950; font-weight: bold; }
+        .negative { color: #f85149; font-weight: bold; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🚀 Smart Money & Pump Radar (الرادار الفوري)</h1>
+        <h1>💎 رادار الجواهر والعملات الفريدة (بدون تكرار)</h1>
         <div class="stats" id="statsBox">جاري تحديث الإحصائيات...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">جاري رصد وجلب الفرص وتحميل العملات... يرجى الانتظار ثوانٍ معدودة.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">جاري تنقية وفلترة السوق من العملات الكبرى... تظهر الجواهر الفريدة الآن.</div>
     </div>
 
     <script>
@@ -208,18 +217,20 @@ def dashboard():
                 
                 let stats = data.stats;
                 document.getElementById('statsBox').innerHTML = 
-                    `العملات المفحوصة: <b>${stats.scanned_tokens}</b> | التنبيهات النشطة: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
+                    `الفحوصات: <b>${stats.scanned_tokens}</b> | الجواهر الفريدة: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
                 
                 let alerts = data.alerts;
                 let container = document.getElementById('alertsContainer');
                 
                 if (alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل ويبحث الآن... ستظهر العملات هنا فور مطابقتها للشروط.</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يبحث وينقي النتائج... ستظهر العملات الفريدة هنا تباعاً.</div>';
                     return;
                 }
                 
                 let html = '';
                 alerts.forEach(item => {
+                    let h1Class = item.h1_change >= 0 ? 'positive' : 'negative';
+                    
                     html += `
                         <div class="card">
                             <div class="info">
@@ -227,12 +238,18 @@ def dashboard():
                                     <span class="chain-tag">${item.chain}</span>
                                     <span class="symbol">${item.symbol}</span> 
                                     <span style="color: #8b949e; font-size: 13px;">(${item.name})</span>
+                                    <span style="color: #8b949e; font-size: 11px; margin-right: 10px;">[وقت الرصد: ${item.time}]</span>
                                 </div>
                                 <div class="address">العقد: ${item.token_address}</div>
-                                <div class="meta">السيولة: $${item.liquidity.toLocaleString()} | الحجم (1س): $${item.volume.toLocaleString()} | التغير: ${item.h1_change >= 0 ? '+' : ''}${item.h1_change}% | السعر: $${item.price}</div>
+                                <div class="meta">
+                                    <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
+                                    <span>الحجم (1س): <b>$${item.volume.toLocaleString()}</b></span>
+                                    <span>تغير 1س: <span class="${h1Class}">${item.h1_change >= 0 ? '+' : ''}${item.h1_change}%</span></span>
+                                    <span>السعر: $${item.price}</span>
+                                </div>
                             </div>
                             <div>
-                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">عرض على DexScreener</a>` : ''}
+                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">رابط السوق 🚀</a>` : ''}
                             </div>
                         </div>
                     `;
