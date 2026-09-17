@@ -1,6 +1,6 @@
 """
-Pure First-Tick Ignition Sniper (Zero-Delay Candle Open Edition)
-رادار الشرارة الأولى الصافية - قمة الدقة وبداية الشمعة الحقيقية بدون تأخير
+Real-Time Instant First-Tick Sniper (Direct Token Stream Edition)
+رادار الشرارة الأولى الفوري - تدفق مباشر للتوكنات الطازجة بدون انتظار
 """
 
 import asyncio
@@ -16,13 +16,14 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط فائقة الدقة لاصطياد أول ثانية من الانطلاقة قبل أي هبوط
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 30))     
-MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 0.1))             # أول نبضة صعود أصلية (+0.1% إلى +15%)
-MAX_M1_CHANGE = float(os.environ.get("MAX_M1_CHANGE", 15.0))            # صارم جداً لمنع العملات التي صعدت وهبطت
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.8))            
-MAX_ALERTS_STORED = 100
-ALERT_COOLDOWN_SECONDS = 600                                         # منع التكرار لضمان نظافة الصفقات
+# شروط مرنة وسريعة جداً لالتقاط الشمعة الصاعدة فور ولادتها
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 20))     
+MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 0.1))             
+MAX_M1_CHANGE = float(os.environ.get("MAX_M1_CHANGE", 99.0))            
+
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.5))            
+MAX_ALERTS_STORED = 120
+ALERT_COOLDOWN_SECONDS = 120                                         
 
 IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "ARB", "SUI", "AVAX", "MATIC", "WETH", "WBTC"}
 IGNORED_TOKENS = {
@@ -34,7 +35,7 @@ IGNORED_TOKENS = {
     "0x4200000000000000000000000000000000000006"
 }
 
-app = FastAPI(title="Pure First-Tick Sniper")
+app = FastAPI(title="Instant First-Tick Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -55,37 +56,35 @@ def send_telegram_alert(message: str):
         pass
 
 
-def fetch_pure_ignition_pairs():
+def fetch_instant_ignition_pairs():
     pairs_list = []
     
-    # الاعتماد الحصري على أحدث التوكنات والترندات المباشرة عبر مسارات متعددة
-    endpoints = [
-        "https://api.dexscreener.com/token-profiles/latest/v1",
-        "https://api.dexscreener.com/token-boosts/latest/v1"
-    ]
-    
-    addresses = []
-    for ep in endpoints:
-        try:
-            r = requests.get(ep, timeout=2)
-            if r.status_code == 200:
-                data = r.json()
-                if isinstance(data, list):
-                    for item in data:
-                        addr = item.get("tokenAddress") or item.get("address")
-                        if addr and addr not in addresses:
-                            addresses.append(addr)
-        except Exception:
-            pass
+    # 1. جلب أحدث التوكنات المضافة حالياً في المنصة
+    try:
+        r = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=2)
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, list):
+                addrs = [item.get("tokenAddress") for item in data if item.get("tokenAddress")]
+                if addrs:
+                    chunk = ",".join(addrs[:30])
+                    r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{chunk}", timeout=2)
+                    if r_tokens.status_code == 200:
+                        p_data = r_tokens.json().get("pairs", [])
+                        if isinstance(p_data, list):
+                            pairs_list.extend(p_data)
+    except Exception:
+        pass
 
-    if addresses:
+    # 2. جلب أحدث أزواج التداول النشطة مباشرة عبر بحث عام سريع
+    search_keywords = ["solana", "base", "pump", "pepe", "ai", "doge"]
+    for kw in search_keywords:
         try:
-            chunk = ",".join(addresses[:30])
-            r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{chunk}", timeout=2)
-            if r_tokens.status_code == 200:
-                p_data = r_tokens.json().get("pairs", [])
-                if isinstance(p_data, list):
-                    pairs_list.extend(p_data)
+            r2 = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={kw}", timeout=1.5)
+            if r2.status_code == 200:
+                items = r2.json().get("pairs", [])
+                if isinstance(items, list):
+                    pairs_list.extend(items[:15])
         except Exception:
             pass
 
@@ -105,8 +104,8 @@ def fetch_pure_ignition_pairs():
             price_change = p.get("priceChange", {})
             m1 = float(price_change.get("m1", 0) or 0)
             
-            # فلترة حاسمة: يجب أن يكون تغير الدقيقة الأولى موجباً وضمن النطاق المبكر جداً (قبل الطيران أو الهبوط)
-            if not (MIN_M1_CHANGE <= m1 <= MAX_M1_CHANGE):
+            # السماح بالعملات التي تبدأ بالصعود أو في بدايات الحركة الطازجة
+            if m1 < MIN_M1_CHANGE:
                 continue
                 
             if token_address not in seen:
@@ -163,7 +162,7 @@ def analyze_and_push(pair):
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        msg = "⚡ *الشرارة الأولى الصافية (أول ثانية صعود)!* [" + chain_id + "]\n"
+        msg = "⚡ *شرارة انطلاق فورية!* [" + chain_id + "]\n"
         msg += "العملة: *" + symbol + "* (" + name + ")\n"
         msg += "العقد: `" + token_address + "`\n"
         msg += "تغير الدقيقة الأولى: `+" + f"{m1_change:.2f}" + "%` | السيولة: $" + f"{liq_usd:,.0f}" + "\n"
@@ -177,7 +176,7 @@ def analyze_and_push(pair):
 async def scanner_loop():
     while True:
         try:
-            pairs = await asyncio.to_thread(fetch_pure_ignition_pairs)
+            pairs = await asyncio.to_thread(fetch_instant_ignition_pairs)
             if pairs:
                 for p in pairs:
                     stats["scanned_tokens"] += 1
@@ -210,7 +209,7 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Pure First-Tick Sniper</title>
+    <title>Instant First-Tick Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
@@ -229,18 +228,18 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى الصافية (أول ثانية انطلاق)</h1>
+        <h1>⚡ رادار الشرارة الأولى الفوري (تدفق مباشر)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يراقب بداية الشموع الصافية حصرياً...</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل بكامل طاقته... سيتم رصد الانطلاقات فوراً.</div>
     </div>
 
     <script>
         async function fetchAlerts() {
             try {
-                let res = alet = await fetch('/api/alerts');
+                let res = await fetch('/api/alerts');
                 let data = await res.json();
                 
                 let stats = data.stats;
@@ -251,7 +250,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار رصد النبضة الأولى في ثفقة البداية الصافية...</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار رصد أول عملة تنطلق الآن...</div>';
                     return;
                 }
                 
