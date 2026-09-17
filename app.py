@@ -1,6 +1,6 @@
 """
-Smart Money & First-Tick Ignition Sniper (Ultra-Fast Direct Latest Engine)
-رادار الشرارة الأولى - المحرك الفائق للتوكنات الطازجة ولحظة الانطلاق
+Multi-Chain Ultra-First Tick Ignition Sniper (All Chains & First-Minute Core)
+رادار الشامل للشرارة الأولى - لجميع السلاسل وبداية الدقيقة الأولى بدقة تامة
 """
 
 import asyncio
@@ -16,20 +16,26 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط مرنة جداً لضمان التقاط أول نبضة صعود في نفس الثانية
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 5))     
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))            
-MAX_ALERTS_STORED = 100
-ALERT_COOLDOWN_SECONDS = 180                                         
+# شروط صارمة لالتقاط أول نبضة صعود طازجة في الدقيقة الأولى لكل السلاسل
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 50))    # سيولة أولية مقبولة لتجنب العملات الوهمية المحضة
+MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 0.5))             # أول نبضة صعود في m1
+MAX_M1_CHANGE = float(os.environ.get("MAX_M1_CHANGE", 80.0))            # لمنع العملات التي طارت وانتهت
 
-IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB"}
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))            
+MAX_ALERTS_STORED = 120
+ALERT_COOLDOWN_SECONDS = 300                                         
+
+IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "ARB", "SUI", "AVAX", "MATIC", "WETH", "WBTC"}
 IGNORED_TOKENS = {
     "So11111111111111111111111111111111111111112",
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "0x4200000000000000000000000000000000000006"
 }
 
-app = FastAPI(title="Ultra-Fast First-Tick Sniper")
+app = FastAPI(title="Multi-Chain First-Tick Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -50,35 +56,40 @@ def send_telegram_alert(message: str):
         pass
 
 
-def fetch_latest_ignition_tokens():
+def fetch_all_chains_ignition():
     pairs_list = []
     
-    # 1. جلب أحدث التوكنات مباشرة من مسار DexScreener Latest Profiles & Boosts (أسرع مسار في السوق)
-    try:
-        r = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=2)
-        if r.status_code == 200:
-            data = r.json()
-            if isinstance(data, list):
-                addrs = [item.get("tokenAddress") for item in data if item.get("chainId") == "solana" or item.get("tokenAddress")]
-                if addrs:
-                    chunk = ",".join(addrs[:25])
-                    r_pairs = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{chunk}", timeout=2)
-                    if r_pairs.status_code == 200:
-                        p_data = r_pairs.json().get("pairs", [])
-                        if isinstance(p_data, list):
-                            pairs_list.extend(p_data)
-    except Exception:
-        pass
-
-    # 2. جلب أحدث أزواج سولانا النشطة مباشرة
-    try:
-        r2 = requests.get("https://api.dexscreener.com/latest/dex/search?q=solana", timeout=2)
-        if r2.status_code == 200:
-            items = r2.json().get("pairs", [])
-            if isinstance(items, list):
-                pairs_list.extend(items[:30])
-    except Exception:
-        pass
+    # استعلامات متعددة متوازية لجميع السلاسل والمنصات (Pump, Raydium, Uniswap, Base, etc.)
+    endpoints = [
+        "https://api.dexscreener.com/token-boosts/latest/v1",
+        "https://api.dexscreener.com/latest/dex/search?q=pump",
+        "https://api.dexscreener.com/latest/dex/search?q=solana",
+        "https://api.dexscreener.com/latest/dex/search?q=base",
+        "https://api.dexscreener.com/latest/dex/search?q=eth",
+        "https://api.dexscreener.com/latest/dex/search?q=bsc"
+    ]
+    
+    for ep in endpoints:
+        try:
+            r = requests.get(ep, timeout=2)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    # لو كان مسار البوستر جلب العناوين
+                    addrs = [item.get("tokenAddress") for item in data if item.get("tokenAddress")]
+                    if addrs:
+                        chunk = ",".join(addrs[:20])
+                        r_pairs = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{chunk}", timeout=2)
+                        if r_pairs.status_code == 200:
+                            p_data = r_pairs.json().get("pairs", [])
+                            if isinstance(p_data, list):
+                                pairs_list.extend(p_data)
+                elif isinstance(data, dict):
+                    items = data.get("pairs", [])
+                    if isinstance(items, list):
+                        pairs_list.extend(items[:25])
+        except Exception:
+            pass
 
     seen = set()
     unique = []
@@ -87,15 +98,20 @@ def fetch_latest_ignition_tokens():
             base_token = p.get("baseToken", {})
             token_address = base_token.get("address")
             symbol = str(base_token.get("symbol", "")).upper()
-            chain_id = str(p.get("chainId", "")).lower()
             
             if not token_address or token_address in IGNORED_TOKENS:
                 continue
             if symbol in IGNORED_SYMBOLS:
                 continue
-            if chain_id and chain_id != "solana":
-                # نركز بشدة على سولانا لسرعة الانطلاقات
-                pass
+                
+            # فحص دقيق لتغير الدقيقة الأولى (m1) وتغير أول 5 دقائق (m5)
+            price_change = p.get("priceChange", {})
+            m1 = float(price_change.get("m1", 0) or 0)
+            m5 = float(price_change.get("m5", 0) or 0)
+            
+            # نلتقط العملة فور بدء الصعود في m1 أو أول نبضة في m5
+            if m1 < MIN_M1_CHANGE and m5 < 1.0:
+                continue
                 
             if token_address not in seen:
                 seen.add(token_address)
@@ -111,7 +127,8 @@ def analyze_and_push(pair):
         if not pair:
             return
 
-        chain_id = str(pair.get("chainId", "SOLANA")).upper()
+        chain_id = str(pair.get("chainId", "UNKNOWN")).upper()
+        dex_id = str(pair.get("dexId", "DEX")).upper()
         base_token = pair.get("baseToken", {})
         token_address = str(base_token.get("address", ""))
         symbol = str(base_token.get("symbol", "")).upper()
@@ -119,42 +136,46 @@ def analyze_and_push(pair):
         if not token_address or token_address in IGNORED_TOKENS or symbol in IGNORED_SYMBOLS:
             return
 
-        liq_usd = float(pair.get("liquidity", {}).get("usd", 100) or 100)
+        liq_usd = float(pair.get("liquidity", {}).get("usd", 0) or 0)
         if liq_usd < MIN_LIQUIDITY_USD:
             return
 
         price_change = pair.get("priceChange", {})
         m1_change = float(price_change.get("m1", 0) or 0)
+        m5_change = float(price_change.get("m5", 0) or 0)
 
         now = time.time()
         if now - last_alert_time.get(token_address, 0) < ALERT_COOLDOWN_SECONDS:
             return
         last_alert_time[token_address] = now
 
-        name = str(base_token.get("name", "New Token"))
-        price = str(pair.get("priceUsd", "0.0001"))
-        pair_url = str(pair.get("url", f"https://dexscreener.com/solana/{token_address}"))
+        name = str(base_token.get("name", "Token"))
+        price = str(pair.get("priceUsd", "?"))
+        pair_url = str(pair.get("url", ""))
 
         entry = {
             "timestamp": now,
             "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
             "chain": chain_id,
+            "dex": dex_id,
             "symbol": symbol,
             "name": name,
             "token_address": token_address,
             "price": price,
             "liquidity": liq_usd,
             "m1_change": m1_change,
+            "m5_change": m5_change,
             "url": pair_url
         }
         
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        msg = "🎯 *شرارة انطلاق الشمعة الأولى!* [" + chain_id + "]\n"
+        msg = "🎯 *شرارة انطلاق الشمعة الأولى الفورية!* [" + chain_id + " / " + dex_id + "]\n"
         msg += "العملة: *" + symbol + "* (" + name + ")\n"
         msg += "العقد: `" + token_address + "`\n"
-        msg += "تغير الدقيقة الأولى: `+" + f"{m1_change:.1f}" + "%` | السيولة: $" + f"{liq_usd:,.0f}" + "\n"
+        msg += "تغير m1: `+" + f"{m1_change:.1f}" + "%` | m5: `+" + f"{m5_change:.1f}" + "%`\n"
+        msg += "السيولة: $" + f"{liq_usd:,.0f}" + " \vert{} السعر: $" + price + "\n"
         msg += pair_url
         
         send_telegram_alert(msg)
@@ -165,7 +186,7 @@ def analyze_and_push(pair):
 async def scanner_loop():
     while True:
         try:
-            pairs = await asyncio.to_thread(fetch_latest_ignition_tokens)
+            pairs = await asyncio.to_thread(fetch_all_chains_ignition)
             if pairs:
                 for p in pairs:
                     stats["scanned_tokens"] += 1
@@ -198,7 +219,7 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Ultra-Fast First-Tick Sniper</title>
+    <title>Multi-Chain First-Tick Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
@@ -212,17 +233,18 @@ def dashboard():
         .btn { background: #238636; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
         .btn:hover { background: #2ea043; }
         .chain-tag { background: #1f6feb; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; display: inline-block; margin-right: 5px; }
+        .dex-tag { background: #8957e5; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; display: inline-block; margin-right: 5px; }
         .ignition { color: #3fb950; font-weight: bold; font-size: 15px; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى (المحرك اللحظي السريع)</h1>
+        <h1>🌐 رادار الشرارة الأولى (جميع السلاسل - الدقيقة الأولى الفورية)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل الآن بكامل طاقته... سيتم رصد العملات لحظياً.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار الشامل يراقب كل السلاسل لحظياً... بانتظار أول نبضة صعود.</div>
     </div>
 
     <script>
@@ -239,7 +261,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار ظهور أول عملة طازجة في السوق...</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار رصد أول نبضة صعود في الدقيقة الأولى عبر كل السلاسل...</div>';
                     return;
                 }
                 
@@ -250,14 +272,16 @@ def dashboard():
                             <div class="info">
                                 <div>
                                     <span class="chain-tag">${item.chain}</span>
+                                    <span class="dex-tag">${item.dex}</span>
                                     <span class="symbol">${item.symbol}</span> 
                                     <span style="color: #8b949e; font-size: 13px;">(${item.name})</span>
-                                    <span style="color: #3fb950; font-size: 12px; font-weight: bold; margin-right: 10px;">[وقت الرصد: ${item.time}]</span>
+                                    <span style="color: #3fb950; font-size: 12px; font-weight: bold; margin-right: 10px;">[${item.time}]</span>
                                 </div>
                                 <div class="address">العقد: ${item.token_address}</div>
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
-                                    <span>تغير m1: <span class="ignition">+${item.m1_change}% 🚀</span></span>
+                                    <span>m1: <span class="ignition">+${item.m1_change}%</span></span>
+                                    <span>m5: <span class="ignition">+${item.m5_change}%</span></span>
                                     <span>السعر: $${item.price}</span>
                                 </div>
                             </div>
