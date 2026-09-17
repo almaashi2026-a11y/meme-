@@ -1,6 +1,6 @@
 """
-Smart Money & First-Tick Ignition Sniper (Real-time Direct RPC & Stream Edition)
-رادار الشرارة الأولى - الرصد المباشر بدون تأخير
+Smart Money & First-Tick Ignition Sniper (Absolute First-Candle Edition)
+رادار الشرارة الأولى - التقاط الشمعة الأولى فور ولادتها
 """
 
 import asyncio
@@ -16,12 +16,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# إعدادات الحساسية القصوى لالتقاط الشرارة في نفس ثانية الانطلاق
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 10))     
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 2))           
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.5))            # مسح سريع جداً كل نصف ثانية
+# شروط دقيقة جداً للالتقاط المبكر جداً
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 5))       # سيولة منخفضة جداً لاصطياد البداية
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 1))             # أول نبضة حجم
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.4))              # مسح فائق السرعة
 MAX_ALERTS_STORED = 100
-ALERT_COOLDOWN_SECONDS = 60                                          
+ALERT_COOLDOWN_SECONDS = 300                                           # منع تكرار نفس العملة لفترة كافية
 
 IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "ARB", "SUI", "AVAX"}
 IGNORED_TOKENS = {
@@ -32,7 +32,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7",
 }
 
-app = FastAPI(title="Real-Time Ignition Sniper")
+app = FastAPI(title="First-Candle Ignition Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -53,50 +53,20 @@ def send_telegram_alert(message: str):
         pass
 
 
-def fetch_live_ignition_pairs():
+def fetch_first_tick_pairs():
     pairs_list = []
     
-    # الاعتماد على مسارات متعددة لجلب أحدث التوكنات المنشأة في الثواني الأخيرة
-    sources = [
-        "https://api.dexscreener.com/token-profiles/latest/v1",
-        "https://api.dexscreener.com/token-boosts/latest/v1"
-    ]
+    # البحث المباشر في أحدث مصطلحات إطلاق العملات الجديدة (Pump, Launch, Raydium, etc.)
+    ignition_queries = ["pump", "raydium", "uniswap", "sol", "base", "new", "moon", "inu", "pepe", "ai", "cat", "dog"]
     
-    addresses = []
-    for src in sources:
+    for q in ignition_queries:
         try:
-            r = requests.get(src, timeout=2)
+            r = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={q}", timeout=1.5)
             if r.status_code == 200:
-                data = r.json()
-                if isinstance(data, list):
-                    for item in data:
-                        addr = item.get("tokenAddress") or item.get("address")
-                        if addr and addr not in addresses:
-                            addresses.append(addr)
-        except Exception:
-            pass
-
-    # إذا توفرت عناوين جديدة، جلب بياناتها الحية فوراً
-    if addresses:
-        try:
-            chunk = ",".join(addresses[:35])
-            r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{chunk}", timeout=2)
-            if r_tokens.status_code == 200:
-                p_data = r_tokens.json().get("pairs", [])
-                if isinstance(p_data, list):
-                    pairs_list.extend(p_data)
-        except Exception:
-            pass
-
-    # مسح إضافي للبحث السريع عن الكلمات المفتاحية النشطة لحظياً
-    live_keywords = ["pump", "sol", "base", "ai", "dog", "cat", "new", "moon"]
-    for kw in live_keywords:
-        try:
-            rk = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={kw}", timeout=1.5)
-            if rk.status_code == 200:
-                k_items = rk.json().get("pairs", [])
-                if isinstance(k_items, list):
-                    pairs_list.extend(k_items[:10])
+                items = r.json().get("pairs", [])
+                if isinstance(items, list):
+                    # نأخذ فقط الأزواج التي أُنشئت حديثاً (يتم ترتيبها عادة حسب النشاط المباشر)
+                    pairs_list.extend(items[:15])
         except Exception:
             pass
 
@@ -113,6 +83,14 @@ def fetch_live_ignition_pairs():
             if symbol in IGNORED_SYMBOLS:
                 continue
                 
+            # التحقق من عمر الزوج إذا توفر وقت الإنشاء لتصفيته وتركه طازجاً
+            pair_created_at = p.get("pairCreatedAt", 0)
+            if pair_created_at:
+                age_minutes = (time.time() * 1000 - pair_created_at) / (1000 * 60)
+                # إذا تجاوز عمر العملة 45 دقيقة، نتخطاها لأننا نبي اللحظات الأولى فقط
+                if age_minutes > 45:
+                    continue
+
             if token_address not in seen:
                 seen.add(token_address)
                 unique_pairs.append(p)
@@ -168,7 +146,7 @@ def analyze_and_push(pair):
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        msg = "⚡ *شرارة فورية لحظية!* [" + chain_id + "]\n"
+        msg = "🚀 *شرارة الشمعة الأولى! (أول الانطلاقة)* [" + chain_id + "]\n"
         msg += "العملة: *" + symbol + "* (" + name + ")\n"
         msg += "العقد: `" + token_address + "`\n"
         msg += "السيولة: $" + f"{liq_usd:,.0f}" + " \vert{} الحجم: $" + f"{h1_vol:,.0f}" + "\n"
@@ -182,7 +160,7 @@ def analyze_and_push(pair):
 async def scanner_loop():
     while True:
         try:
-            pairs = await asyncio.to_thread(fetch_live_ignition_pairs)
+            pairs = await asyncio.to_thread(fetch_first_tick_pairs)
             if pairs:
                 for p in pairs:
                     stats["scanned_tokens"] += 1
@@ -215,31 +193,31 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Real-Time Ignition Sniper</title>
+    <title>First-Candle Ignition Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
         h1 { margin: 0; color: #58a6ff; font-size: 22px; }
         .stats { background: #161b22; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; font-size: 14px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #f85149; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #238636; }
         .info { display: flex; flex-direction: column; gap: 5px; max-width: 75%; }
-        .symbol { font-size: 18px; font-weight: bold; color: #ff7b72; }
+        .symbol { font-size: 18px; font-weight: bold; color: #3fb950; }
         .address { font-size: 12px; color: #8b949e; font-family: monospace; word-break: break-all; }
         .meta { font-size: 13px; color: #8b949e; display: flex; gap: 15px; flex-wrap: wrap; }
-        .btn { background: #da3633; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
-        .btn:hover { background: #f85149; }
+        .btn { background: #238636; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
+        .btn:hover { background: #2ea043; }
         .chain-tag { background: #1f6feb; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; display: inline-block; margin-right: 5px; }
-        .ignition { color: #ff7b72; font-weight: bold; font-size: 15px; }
+        .ignition { color: #3fb950; font-weight: bold; font-size: 15px; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الفورية (الرصد اللحظي المباشر)</h1>
+        <h1>🚀 رادار الشرارة الأولى (التقاط الشمعة الأولى فور ولادتها)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل الآن بالسرعة القصوى... ستظهر العملات هنا فور انطلاقها.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يبحث عن الشمعة الأولى في أزواج السوق الطازجة...</div>
     </div>
 
     <script>
@@ -256,7 +234,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار رصد النبضة الأولى في السوق الحي...</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار ظهور أول نبضة للعملات الجديدة...</div>';
                     return;
                 }
                 
@@ -275,12 +253,12 @@ def dashboard():
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
                                     <span>الحجم: <b>$${item.volume.toLocaleString()}</b></span>
-                                    <span>الحالة: <span class="ignition">شرارة فورية ⚡</span></span>
+                                    <span>الحالة: <span class="ignition">الشمعة الأولى 🌱</span></span>
                                     <span>السعر: $${item.price}</span>
                                 </div>
                             </div>
                             <div>
-                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">قنص الشرارة 🎯</a>` : ''}
+                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">قنص العملة 🎯</a>` : ''}
                             </div>
                         </div>
                     `;
@@ -291,7 +269,7 @@ def dashboard():
             }
         }
         
-        setInterval(fetchAlerts, 2000);
+        setInterval(fetchAlerts, 3000);
         fetchAlerts();
     </script>
 </body>
