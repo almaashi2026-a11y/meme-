@@ -1,6 +1,5 @@
 """
-Smart Money & Pump Radar (Absolute Momentum Sniper Edition)
-رادار القناص اللحظي للزخم - صواريخ حقيقية وفلترة صارمة للنسب المرتفعة فقط
+Smart Money & Pump Radar (Production Ready Edition)
 """
 
 import asyncio
@@ -13,21 +12,17 @@ import requests
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 
-# ============ إعدادات القناص العنيف ============
-
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط صارمة جداً: لا تقبل إلا العملات التي تتحرك بعنف وتغير حقيقي
 MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 500))
 MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 500))
-MIN_H1_CHANGE = float(os.environ.get("MIN_H1_CHANGE", 25.0))  # اشتراط صعود +25% كحد أدنى حقيقي
+MIN_H1_CHANGE = float(os.environ.get("MIN_H1_CHANGE", 25.0))
 
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 3.0))
 MAX_ALERTS_STORED = 100
 ALERT_COOLDOWN_SECONDS = 600
 
-# قائمة حظر شاملة لأي عملة كبرى أو أساسية قد تتسرب
 IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "ARB", "SUI", "AVAX"}
 IGNORED_TOKENS = {
     "So11111111111111111111111111111111111111112",
@@ -60,8 +55,6 @@ def send_telegram_alert(message: str):
 
 def fetch_pure_momentum_pairs():
     pairs_list = []
-    
-    # 1. سحب أحدث الـ Token Profiles (أحدث المشاريع المُضافَة)
     try:
         r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=2)
         if r.status_code == 200:
@@ -79,7 +72,6 @@ def fetch_pure_momentum_pairs():
     except Exception:
         pass
 
-    # 2. سحب أحدث الـ Token Boosts (العملات المدعومة والنشطة مضاربياً)
     try:
         r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=2)
         if r2.status_code == 200:
@@ -97,10 +89,8 @@ def fetch_pure_momentum_pairs():
     except Exception:
         pass
 
-    # تصفية ومنع التكرار واستبعاد العملات الكبرى تماماً
     seen_addresses = set()
     unique = []
-    
     for p in pairs_list:
         base_token = p.get("baseToken", {})
         token_address = base_token.get("address")
@@ -114,7 +104,6 @@ def fetch_pure_momentum_pairs():
         if token_address not in seen_addresses:
             seen_addresses.add(token_address)
             unique.append(p)
-            
     return unique
 
 
@@ -141,7 +130,6 @@ def analyze_and_push(pair):
     price_change = pair.get("priceChange", {})
     h1_change = float(price_change.get("h1", 0) or 0)
 
-    # 🚀 الشرط الحاسم: استبعاد أي عملة صعودها أقل من الحد الأدنى للصاروخ (+25%)
     if h1_change < MIN_H1_CHANGE:
         return
 
@@ -171,16 +159,6 @@ def analyze_and_push(pair):
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] = len(alerts_feed)
-
-    msg = (
-        f"🚀 *صاروخ سوق مرصود!* [{chain_id}]\n"
-        f"العملة: *{symbol}* ({name})\n"
-        f"العقد: `{token_address}`\n"
-        f"🔥 صعود الساعة (1س): *+{h1_change:.1f}%*\n"
-        f"السيولة: ${liq_usd:,.0f} \vert{} الحجم: ${h1_vol:,.0f}\n"
-        f"{pair_url}"
-    )
-    send_telegram_alert(msg)
 
 
 async def scanner_loop():
@@ -232,32 +210,26 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>🎯 رادار صواريخ الزخم اللحظي (مستبعد العملات الباردة)</h1>
+        <h1>🎯 رادار صواريخ الزخم اللحظي</h1>
         <div class="stats" id="statsBox">جاري فحص السوق...</div>
     </div>
-    
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار الآن يراقب حصرياً أحدث المشاريع الصاعدة بقوة (+25% فأكثر)... انتظر ظهور الصواريخ المشتعلة.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل الآن... بانتظار الصواريخ المشتعلة.</div>
     </div>
-
     <script>
         async function fetchAlerts() {
             try {
                 let res = await fetch('/api/alerts');
                 let data = await res.json();
-                
                 let stats = data.stats;
                 document.getElementById('statsBox').innerHTML = 
-                    `المفحوصة: <b>${stats.scanned_tokens}</b> | الصواريخ المرصودة: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
-                
+                    `المفحوصة: <b>${stats.scanned_tokens}</b> | الصواريخ: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
                 let alerts = data.alerts;
                 let container = document.getElementById('alertsContainer');
-                
                 if (alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار شغال وبقوة... بانتظار تطابق الشروط الصاروخية وظهور أول عملة منفجرة.</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار تطابق الشروط الصاروخية...</div>';
                     return;
                 }
-                
                 let html = '';
                 alerts.forEach(item => {
                     html += `
@@ -267,12 +239,11 @@ def dashboard():
                                     <span class="chain-tag">${item.chain}</span>
                                     <span class="symbol">${item.symbol}</span> 
                                     <span style="color: #8b949e; font-size: 13px;">(${item.name})</span>
-                                    <span style="color: #8b949e; font-size: 11px; margin-right: 10px;">[وقت الرصد: ${item.time}]</span>
                                 </div>
                                 <div class="address">العقد: ${item.token_address}</div>
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
-                                    <span>الحجم (1س): <b>$${item.volume.toLocaleString()}</b></span>
+                                    <span>الحجم: <b>$${item.volume.toLocaleString()}</b></span>
                                     <span>تغير 1س: <span class="explosive">+${item.h1_change}% 🚀</span></span>
                                     <span>السعر: $${item.price}</span>
                                 </div>
@@ -284,11 +255,8 @@ def dashboard():
                     `;
                 });
                 container.innerHTML = html;
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
         }
-        
         setInterval(fetchAlerts, 3000);
         fetchAlerts();
     </script>
