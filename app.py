@@ -1,6 +1,6 @@
 """
-Smart Money & First-Tick Ignition Sniper (Ultra-Sensitive Edition)
-رادار الشرارة الأولى - الحساسية القصوى لالتقاط أول نبضة
+Smart Money & First-Tick Ignition Sniper (Direct Pairs Ignition Edition)
+رادار الشرارة الأولى - الجلب المباشر من أحدث أزواج السوق النشطة
 """
 
 import asyncio
@@ -16,15 +16,15 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# إعدادات فائقة الحساسية لالتقاط أي شرارة أولى مبكرة جداً
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 150))   # تخفيض الحد الأدنى للسيولة للسرعة القصوى
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 50))         # تخفيض حجم التداول لجلب العملات الناشئة فوراً
-MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 1.2))          # التقاط أي حركة صعود تبدأ من +1.2% في الدقيقة الأولى
-MAX_M1_CHANGE = float(os.environ.get("MAX_M1_CHANGE", 120.0))  
+# إعدادات مرنة جداً لالتقاط أي حركة مبكرة فوراً
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 100))   
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 30))         
+MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 0.8))          # التقاط أي تغير يبدأ من +0.8% فما فوق
+MAX_M1_CHANGE = float(os.environ.get("MAX_M1_CHANGE", 150.0))  
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))            # فحص صاروخي كل ثانية واحدة
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))            
 MAX_ALERTS_STORED = 100
-ALERT_COOLDOWN_SECONDS = 600                                         # تقليل وقت الهدوء لفتح المجال لتنبيهات أكثر
+ALERT_COOLDOWN_SECONDS = 300                                         # تقليل وقت الهدوء لضمان سرعة الظهور
 
 IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "ARB", "SUI", "AVAX"}
 IGNORED_TOKENS = {
@@ -35,7 +35,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7",
 }
 
-app = FastAPI(title="Ultra-Sensitive Ignition Sniper")
+app = FastAPI(title="Direct Ignition Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -59,29 +59,27 @@ def send_telegram_alert(message: str):
 def fetch_safe_pairs():
     pairs_list = []
     
-    try:
-        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=3)
-        if r.status_code == 200:
-            profiles = r.json()
-            if isinstance(profiles, list):
-                addrs = [p.get("tokenAddress") for p in profiles[:90] if p.get("tokenAddress")]
-                if addrs:
-                    rt = requests.get("https://api.dexscreener.com/latest/dex/tokens/" + ",".join(addrs[:30]), timeout=3)
-                    if rt.status_code == 200:
-                        items = rt.json().get("pairs", [])
-                        if isinstance(items, list):
-                            pairs_list.extend(items)
-    except Exception:
-        pass
+    # 1. جلب أحدث العملات والبحث العام النشط مباشرة من DexScreener Search API
+    search_queries = ["solana", "eth", "bsc", "base", "pepe", "ai", "dog", "cat", "inu", "moon", "pump"]
+    for q in search_queries:
+        try:
+            r = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={q}", timeout=3)
+            if r.status_code == 200:
+                data = r.json().get("pairs", [])
+                if isinstance(data, list):
+                    pairs_list.extend(data[:25])
+        except Exception:
+            pass
 
+    # 2. دعم إضافي من التوكنات المروجة والحديثة لضمان شمولية السوق
     try:
         r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=3)
         if r2.status_code == 200:
             boosts = r2.json()
             if isinstance(boosts, list):
-                addrs_b = [b.get("tokenAddress") for b in boosts[:70] if b.get("tokenAddress")]
+                addrs_b = [b.get("tokenAddress") for b in boosts[:40] if b.get("tokenAddress")]
                 if addrs_b:
-                    rb = requests.get("https://api.dexscreener.com/latest/dex/tokens/" + ",".join(addrs_b[:30]), timeout=3)
+                    rb = requests.get("https://api.dexscreener.com/latest/dex/tokens/" + ",".join(addrs_b[:20]), timeout=3)
                     if rb.status_code == 200:
                         p_data = rb.json().get("pairs", [])
                         if isinstance(p_data, list):
@@ -164,10 +162,10 @@ def analyze_and_push(pair):
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        msg = "⚡ *الشرارة الأولى (حساسية عالية m1)!* [" + chain_id + "]\n"
+        msg = "⚡ *الشرارة الأولى (رصد مباشر m1)!* [" + chain_id + "]\n"
         msg += "العملة: *" + symbol + "* (" + name + ")\n"
         msg += "العقد: `" + token_address + "`\n"
-        msg += "🚀 تغير الدقيقة الأولى: *+" + f"{m1_change:.1f}" + "%* (انفجار مبكر)\n"
+        msg += "🚀 تغير الدقيقة الأولى: *+" + f"{m1_change:.1f}" + "%*\n"
         msg += "السيولة: $" + f"{liq_usd:,.0f}" + " \vert{} الحجم: $" + f"{h1_vol:,.0f}" + "\n"
         msg += pair_url
         
@@ -212,7 +210,7 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Ultra-Sensitive Ignition Sniper</title>
+    <title>Direct Ignition Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
@@ -231,12 +229,12 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى (الحساسية القصوى - الأحدث في الصدارة)</h1>
+        <h1>⚡ رادار الشرارة الأولى (الجلب المباشر للأزواج النشطة)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل بالحساسية القصوى... بانتظار أول شرارة.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يبحث في أحدث أزواج السوق النشطة... ستظهر العملات هنا فوراً.</div>
     </div>
 
     <script>
@@ -253,7 +251,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار متصل يراقب بدقة متناهية... ستظهر العملات هنا فور تحركها.</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">جاري فحص نبض السوق الحي... ستظهر العملات هنا فور رصد الشرارة.</div>';
                     return;
                 }
                 
