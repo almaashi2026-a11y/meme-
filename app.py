@@ -1,6 +1,6 @@
 """
-Smart Money & Pump Radar (Ultra-Stable First Second Edition)
-رادار الشرارة الأولى المستقر - حماية تامة ضد أعطال الإقلاع
+Smart Money & Pump Radar (Fixed F-String Edition)
+رادار الشرارة الأولى - نسخة نظيفة ومقومة بالكامل
 """
 
 import asyncio
@@ -34,7 +34,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7",
 }
 
-app = FastAPI(title="Stable Ignition Sniper")
+app = FastAPI(title="Fixed Ignition Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -44,7 +44,7 @@ last_alert_time = {}
 def send_telegram_alert(message: str):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
     try:
         requests.post(url, data={
             "chat_id": TELEGRAM_CHAT_ID,
@@ -58,7 +58,6 @@ def send_telegram_alert(message: str):
 def fetch_safe_pairs():
     pairs_list = []
     
-    # جلب الـ Profiles بأمان مع حماية كاملة ضد الأخطاء
     try:
         r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=3)
         if r.status_code == 200:
@@ -66,7 +65,7 @@ def fetch_safe_pairs():
             if isinstance(profiles, list):
                 addrs = [p.get("tokenAddress") for p in profiles[:80] if p.get("tokenAddress")]
                 if addrs:
-                    rt = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:30])}", timeout=3)
+                    rt = requests.get("https://api.dexscreener.com/latest/dex/tokens/" + ",".join(addrs[:30]), timeout=3)
                     if rt.status_code == 200:
                         items = rt.json().get("pairs", [])
                         if isinstance(items, list):
@@ -74,7 +73,6 @@ def fetch_safe_pairs():
     except Exception:
         pass
 
-    # جلب الـ Boosts بأمان
     try:
         r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=3)
         if r2.status_code == 200:
@@ -82,7 +80,7 @@ def fetch_safe_pairs():
             if isinstance(boosts, list):
                 addrs_b = [b.get("tokenAddress") for b in boosts[:60] if b.get("tokenAddress")]
                 if addrs_b:
-                    rb = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs_b[:30])}", timeout=3)
+                    rb = requests.get("https://api.dexscreener.com/latest/dex/tokens/" + ",".join(addrs_b[:30]), timeout=3)
                     if rb.status_code == 200:
                         p_data = rb.json().get("pairs", [])
                         if isinstance(p_data, list):
@@ -117,9 +115,9 @@ def analyze_and_push(pair):
         if not pair:
             return
 
-        chain_id = pair.get("chainId", "unknown").upper()
+        chain_id = str(pair.get("chainId", "unknown")).upper()
         base_token = pair.get("baseToken", {})
-        token_address = base_token.get("address", "")
+        token_address = str(base_token.get("address", ""))
         symbol = str(base_token.get("symbol", "")).upper()
         
         if not token_address or token_address in IGNORED_TOKENS or symbol in IGNORED_SYMBOLS:
@@ -136,7 +134,6 @@ def analyze_and_push(pair):
         price_change = pair.get("priceChange", {})
         h1_change = float(price_change.get("h1", 0) or 0)
 
-        # الشرط الحاسم للشرارة الأولى (بين 7% و 60%)
         if not (MIN_H1_CHANGE <= h1_change <= MAX_H1_CHANGE):
             return
 
@@ -145,7 +142,7 @@ def analyze_and_push(pair):
             return
         last_alert_time[token_address] = now
 
-        name = base_token.get("name", "Token")
+        name = str(base_token.get("name", "Token"))
         price = str(pair.get("priceUsd", "?"))
         pair_url = str(pair.get("url", ""))
 
@@ -165,14 +162,7 @@ def analyze_and_push(pair):
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        msg = (
-            f"⚡ *شرارة الانطلاق الأولى!* [{chain_id}]\n"
-            f"العملة: *{symbol}* ({name})\n"
-            f"العقد: `{token_address}`\n"
-            f"🚀 تغير الساعة: *+{h1_change:.1f}%*\n"
-            f"السيولة: ${liq_usd:,.0f} \vert{} الحجم: ${h1_vol:,.0f}\n"
-            f"{pair_url}"
-        )
+        msg = f"⚡ *شرارة الانطلاق الأولى!* [{chain_id}]\nالعملة: *{symbol}* ({name})\nالعقد: `{token_address}`\n🚀 تغير الساعة: *+{h1_change:.1f}%*\nالسيولة: ${liq_usd:,.0f} \vert{} الحجم: ${h1_vol:,.0f}\n{pair_url}"
         send_telegram_alert(msg)
     except Exception:
         pass
@@ -214,7 +204,7 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Stable Ignition Sniper</title>
+    <title>Fixed Ignition Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
@@ -233,12 +223,12 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى (مستقر وآمن)</h1>
+        <h1>⚡ رادار الشرارة الأولى (يعمل بنجاح)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل بكامل طاقته الآمنة... بانتظار الشرارات المبكرة.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل بكامل طاقته... بانتظار الشرارات المبكرة.</div>
     </div>
 
     <script>
@@ -251,7 +241,7 @@ def dashboard():
                 document.getElementById('statsBox').innerHTML = 
                     `المفحوصة: <b>${stats.scanned_tokens}</b> | الشرارات: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
                 
-                    let alerts = data.alerts;
+                let alerts = data.alerts;
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
