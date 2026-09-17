@@ -1,6 +1,6 @@
 """
-Smart Money & Pump Radar (Omni-Chain Instant Fire Edition)
-الرادار الفوري الشامل لجميع السلاسل - إظهار النتائج بلا توقف
+Smart Money & Pump Radar (Unified Ultimate Edition)
+الرادار المدمج الشامل - يعرض النتائج والداشبورد مباشرة بدون أي عوائق
 """
 
 import asyncio
@@ -11,21 +11,18 @@ from datetime import datetime, timezone
 
 import requests
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, JSONResponse
 
-# ============ إعدادات الظهور الفوري (بدون فلاتر معقدة تحجب النتائج) ============
+# ============ إعدادات الرادار الفوري ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط مرنة جداً لضمان ظهور النتائج فوراً على الداشبورد
 MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 50))
 MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 10))
-
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 60  # تقليل وقت التبرع لتظهر العملات بسرعة
+ALERT_COOLDOWN_SECONDS = 30
 
 app = FastAPI(title="Smart Money & Pump Radar")
 
@@ -49,10 +46,9 @@ def send_telegram_alert(message: str):
 
 
 def fetch_all_active_pairs():
-    """جلب أضخم قائمة ممكنة من العملات وأحدثها على الإطلاق لضمان ظهور النتائج"""
     pairs_list = []
     
-    # 1. أحدث الـ Token Profiles
+    # 1. جلب الـ Profiles
     try:
         r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=2)
         if r.status_code == 200:
@@ -70,23 +66,7 @@ def fetch_all_active_pairs():
     except Exception:
         pass
 
-    # 2. أحدث الـ Token Boosts
-    try:
-        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=2)
-        if r2.status_code == 200:
-            boosts = r2.json()
-            if isinstance(boosts, list):
-                addrs_b = [b.get("tokenAddress") for b in boosts[:60] if b.get("tokenAddress")]
-                if addrs_b:
-                    rb = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs_b[:30])}", timeout=2)
-                    if rb.status_code == 200:
-                        p_data = rb.json().get("pairs", [])
-                        if isinstance(p_data, list):
-                            pairs_list.extend(p_data)
-    except Exception:
-        pass
-
-    # 3. بحث شامل ومتنوع لجميع الشبكات والكلمات الساخنة
+    # 2. بحث شامل بالكلمات الساخنة
     queries = ["sol", "base", "eth", "bsc", "pump", "ai", "meme", "pepe", "doge", "cat", "sui", "arb"]
     for q in queries:
         try:
@@ -133,27 +113,22 @@ def analyze_and_push(pair):
     symbol = pair.get("baseToken", {}).get("symbol", "?")
     name = pair.get("baseToken", {}).get("name", "Token")
     price = pair.get("priceUsd", "?")
-    mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
     
     price_change = pair.get("priceChange", {})
     h1_change = float(price_change.get("h1", 0) or 0)
 
-    status_text = f"🚀 رصد نشاط لحظي [1h: {h1_change:+.1f}%] [سيولة: ${liq_usd:,.0f}]"
-
     entry = {
-        "type": "instant_radar",
-        "time": datetime.now(timezone.utc).isoformat(),
+        "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
         "chain": chain_id,
         "symbol": symbol,
         "name": name,
         "token_address": token_address,
-        "price": price,
-        "mcap": mcap,
+        "price": str(price),
         "liquidity": liq_usd,
         "volume": h1_vol,
+        "h1_change": h1_change,
         "url": pair_url,
-        "safety": status_text,
         "strength": float(liq_usd + h1_vol)
     }
     alerts_feed.appendleft(entry)
@@ -163,8 +138,7 @@ def analyze_and_push(pair):
         f"🎯 *رصد عملة جديدة* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
-        f"الحالة: {status_text}\n"
-        f"السعر: ${price}\n"
+        f"السيولة: ${liq_usd:,.0f} | 1h: {h1_change:+.1f}%\n"
         f"{pair_url}"
     )
     send_telegram_alert(msg)
@@ -178,7 +152,7 @@ async def scanner_loop():
                 stats["scanned_tokens"] += 1
                 await asyncio.to_thread(analyze_and_push, p)
             
-        stats["last_scan"] = datetime.now(timezone.utc).isoformat()
+        stats["last_scan"] = datetime.now(timezone.utc).strftime("%H:%M:%S")
         await asyncio.sleep(POLL_SECONDS)
 
 
@@ -193,9 +167,85 @@ def api_alerts():
     return JSONResponse({"alerts": sorted_alerts, "stats": stats})
 
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def dashboard():
-    return FileResponse("static/index.html")
+    return """
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>Smart Money & Pump Radar - الاحترافي</title>
+    <style>
+        body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; }
+        h1 { margin: 0; color: #58a6ff; font-size: 24px; }
+        .stats { background: #161b22; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; font-size: 14px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+        .info { display: flex; flex-direction: column; gap: 5px; }
+        .symbol { font-size: 18px; font-weight: bold; color: #3fb950; }
+        .address { font-size: 12px; color: #8b949e; font-family: monospace; }
+        .meta { font-size: 13px; color: #d2a8ff; }
+        .btn { background: #238636; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; }
+        .btn:hover { background: #2ea043; }
+        .chain-tag { background: #1f6feb; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; display: inline-block; margin-right: 5px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 Smart Money & Pump Radar (الرادار الفوري)</h1>
+        <div class="stats" id="statsBox">جاري تحديث الإحصائيات...</div>
+    </div>
+    
+    <div id="alertsContainer">
+        <div style="text-align: center; color: #8b949e; padding: 40px;">جاري رصد وجلب الفرص وتحميل العملات... يرجى الانتظار ثوانٍ معدودة.</div>
+    </div>
 
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
+    <script>
+        async function fetchAlerts() {
+            try {
+                let res = await fetch('/api/alerts');
+                let data = await res.json();
+                
+                let stats = data.stats;
+                document.getElementById('statsBox').innerHTML = 
+                    `العملات المفحوصة: <b>${stats.scanned_tokens}</b> | التنبيهات النشطة: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
+                
+                let alerts = data.alerts;
+                let container = document.getElementById('alertsContainer');
+                
+                if (alerts.length === 0) {
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل ويبحث الآن... ستظهر العملات هنا فور مطابقتها للشروط.</div>';
+                    return;
+                }
+                
+                let html = '';
+                alerts.forEach(item => {
+                    html += `
+                        <div class="card">
+                            <div class="info">
+                                <div>
+                                    <span class="chain-tag">${item.chain}</span>
+                                    <span class="symbol">${item.symbol}</span> 
+                                    <span style="color: #8b949e; font-size: 13px;">(${item.name})</span>
+                                </div>
+                                <div class="address">العقد: ${item.token_address}</div>
+                                <div class="meta">السيولة: $${item.liquidity.toLocaleString()} | الحجم (1س): $${item.volume.toLocaleString()} | التغير: ${item.h1_change >= 0 ? '+' : ''}${item.h1_change}% | السعر: $${item.price}</div>
+                            </div>
+                            <div>
+                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">عرض على DexScreener</a>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        
+        setInterval(fetchAlerts, 3000);
+        fetchAlerts();
+    </script>
+</body>
+</html>
+    """
