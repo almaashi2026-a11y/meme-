@@ -1,6 +1,6 @@
 """
-Raw RPC & Factory Omni-Chain Sniper (Zero-Lag Core)
-قناص العقود المباشر من البلوكتشين وعقود المصانع بدون أي وسيط
+Smart Money & Pump Radar (Omni-Chain Instant Fire Edition)
+الرادار الفوري الشامل لجميع السلاسل - إظهار النتائج بلا توقف
 """
 
 import asyncio
@@ -14,22 +14,20 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ============ إعدادات القنص الحقيقي من البلوكتشين ============
+# ============ إعدادات الظهور الفوري (بدون فلاتر معقدة تحجب النتائج) ============
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# عناوين عقود المصانع الشهيرة (Factory Contracts) لرصد ولادة الأزواج الجديدة لحظياً
-# يمكنك إضافة أو تعديل روابط الـ RPC الخاصة بك للحصول على سرعة فائقة
-SOLANA_RPC_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
-EVM_RPC_URL = os.environ.get("EVM_RPC_URL", "https://eth.llamarpc.com")
+# شروط مرنة جداً لضمان ظهور النتائج فوراً على الداشبورد
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 50))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 10))
 
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1000))
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.5))
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))
 MAX_ALERTS_STORED = 500
-ALERT_COOLDOWN_SECONDS = 300
+ALERT_COOLDOWN_SECONDS = 60  # تقليل وقت التبرع لتظهر العملات بسرعة
 
-app = FastAPI(title="Raw RPC Factory Sniper")
+app = FastAPI(title="Smart Money & Pump Radar")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -45,74 +43,58 @@ def send_telegram_alert(message: str):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
             "parse_mode": "Markdown"
-        }, timeout=2.5)
-    except Exception:
-        pass
-
-
-def fetch_solana_raw_mempool():
-    """رصد أحدث المعاملات والعقود النشطة على شبكة سولانا عبر RPC مباشرة"""
-    new_pairs = []
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "getRecentPrioritizationFees",
-        "params": []
-    }
-    # استخدام استعلامات سريعة جداً لأحدث توقيعات البلوكتشين الخام
-    try:
-        r = requests.post(SOLANA_RPC_URL, json={
-            "jsonrpc": "2.0", "id": 1,
-            "method": "getSignaturesForAddress",
-            "params": ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", {"limit": 15}]
         }, timeout=2)
-        
-        if r.status_code == 200:
-            data = r.json()
-            signatures = data.get("result", [])
-            for sig_obj in signatures:
-                sig = sig_obj.get("signature")
-                if sig:
-                    # فحص تفاصيل المعاملة الخام
-                    tx_r = requests.post(SOLANA_RPC_URL, json={
-                        "jsonrpc": "2.0", "id": 1,
-                        "method": "getTransaction",
-                        "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
-                    }, timeout=2)
-                    
-                    if tx_r.status_code == 200:
-                        tx_data = tx_r.json().get("result")
-                        if tx_data:
-                            # استخراج بيانات العقد إذا تطابق مع شروط السيولة والإنشاء
-                            meta = tx_data.get("meta", {})
-                            if meta and not meta.get("err"):
-                                # محاكاة استخراج العقد الخام
-                                pass
     except Exception:
         pass
-    return new_pairs
 
 
-def fetch_dex_factory_feed():
-    """جلب أحدث مجمعات السيولة عبر تجميع بيانات العقود الخام اللحظية"""
+def fetch_all_active_pairs():
+    """جلب أضخم قائمة ممكنة من العملات وأحدثها على الإطلاق لضمان ظهور النتائج"""
     pairs_list = []
     
-    # استعلام مزدوج فائق السرعة يستهدف أحدث الأزواج المنشأة بدقة عالية
-    endpoints = [
-        "https://api.dexscreener.com/latest/dex/search?q=pump",
-        "https://api.dexscreener.com/latest/dex/search?q=solana",
-        "https://api.dexscreener.com/latest/dex/search?q=base"
-    ]
-    
-    for url in endpoints:
+    # 1. أحدث الـ Token Profiles
+    try:
+        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=2)
+        if r.status_code == 200:
+            profiles = r.json()
+            if isinstance(profiles, list):
+                addrs = [p.get("tokenAddress") for p in profiles[:100] if p.get("tokenAddress")]
+                if addrs:
+                    for i in range(0, len(addrs), 30):
+                        chunk = addrs[i:i+30]
+                        rt = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(chunk)}", timeout=2)
+                        if rt.status_code == 200:
+                            items = rt.json().get("pairs", [])
+                            if isinstance(items, list):
+                                pairs_list.extend(items)
+    except Exception:
+        pass
+
+    # 2. أحدث الـ Token Boosts
+    try:
+        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=2)
+        if r2.status_code == 200:
+            boosts = r2.json()
+            if isinstance(boosts, list):
+                addrs_b = [b.get("tokenAddress") for b in boosts[:60] if b.get("tokenAddress")]
+                if addrs_b:
+                    rb = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs_b[:30])}", timeout=2)
+                    if rb.status_code == 200:
+                        p_data = rb.json().get("pairs", [])
+                        if isinstance(p_data, list):
+                            pairs_list.extend(p_data)
+    except Exception:
+        pass
+
+    # 3. بحث شامل ومتنوع لجميع الشبكات والكلمات الساخنة
+    queries = ["sol", "base", "eth", "bsc", "pump", "ai", "meme", "pepe", "doge", "cat", "sui", "arb"]
+    for q in queries:
         try:
-            r = requests.get(url, timeout=1.5)
-            if r.status_code == 200:
-                items = r.json().get("pairs", [])
+            rq = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={q}", timeout=1.5)
+            if rq.status_code == 200:
+                items = rq.json().get("pairs", [])
                 if isinstance(items, list):
-                    # فرز العملات حسب الأحدث إنتاجاً (أحدث وقت إنشاء مجمع)
-                    sorted_items = sorted(items, key=lambda x: x.get("pairCreatedAt", 0), reverse=True)
-                    pairs_list.extend(sorted_items[:15])
+                    pairs_list.extend(items[:25])
         except Exception:
             pass
 
@@ -126,7 +108,7 @@ def fetch_dex_factory_feed():
     return unique
 
 
-def analyze_raw_pair(pair):
+def analyze_and_push(pair):
     if not pair:
         return
 
@@ -139,12 +121,8 @@ def analyze_raw_pair(pair):
     if liq_usd < MIN_LIQUIDITY_USD:
         return
 
-    # فحص عمر العقد بالمللي ثانية (استهداف العملات التي أُنشئت في آخر د دقائق فقط)
-    created_at = pair.get("pairCreatedAt", 0)
-    current_time_ms = time.time() * 1000
-    
-    # إذا كان عمر العقد أكثر من 30 دقيقة، نتجاهله فوراً ونركز فقط على الولادات الحديثة
-    if created_at > 0 and (current_time_ms - created_at) > 30 * 60 * 1000:
+    h1_vol = float(pair.get("volume", {}).get("h1", 0) or 0)
+    if h1_vol < MIN_VOLUME_USD:
         return
 
     now = time.time()
@@ -157,11 +135,14 @@ def analyze_raw_pair(pair):
     price = pair.get("priceUsd", "?")
     mcap = pair.get("fdv", pair.get("marketCap", "?"))
     pair_url = pair.get("url", "")
+    
+    price_change = pair.get("priceChange", {})
+    h1_change = float(price_change.get("h1", 0) or 0)
 
-    status_text = f"🚨 ولادة عقد جديد بـسيولة قوية [السيولة: ${liq_usd:,.0f}]"
+    status_text = f"🚀 رصد نشاط لحظي [1h: {h1_change:+.1f}%] [سيولة: ${liq_usd:,.0f}]"
 
     entry = {
-        "type": "raw_rpc_sniper",
+        "type": "instant_radar",
         "time": datetime.now(timezone.utc).isoformat(),
         "chain": chain_id,
         "symbol": symbol,
@@ -170,15 +151,16 @@ def analyze_raw_pair(pair):
         "price": price,
         "mcap": mcap,
         "liquidity": liq_usd,
+        "volume": h1_vol,
         "url": pair_url,
         "safety": status_text,
-        "strength": float(liq_usd)
+        "strength": float(liq_usd + h1_vol)
     }
     alerts_feed.appendleft(entry)
     stats["alerts_total"] += 1
 
     msg = (
-        f"⚡ *رصد عقد ولادة مبكرة (RPC الخام)* [{chain_id}]\n"
+        f"🎯 *رصد عملة جديدة* [{chain_id}]\n"
         f"العملة: *{symbol}* ({name})\n"
         f"العقد: `{token_address}`\n"
         f"الحالة: {status_text}\n"
@@ -190,11 +172,11 @@ def analyze_raw_pair(pair):
 
 async def scanner_loop():
     while True:
-        pairs = await asyncio.to_thread(fetch_dex_factory_feed)
+        pairs = await asyncio.to_thread(fetch_all_active_pairs)
         if pairs:
             for p in pairs:
-                await asyncio.to_thread(analyze_raw_pair, p)
                 stats["scanned_tokens"] += 1
+                await asyncio.to_thread(analyze_and_push, p)
             
         stats["last_scan"] = datetime.now(timezone.utc).isoformat()
         await asyncio.sleep(POLL_SECONDS)
