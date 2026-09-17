@@ -1,6 +1,6 @@
 """
-Smart Money & First-Second Ignition Sniper (M5 Micro-Pulse Edition)
-رادار الشرارة الأولى - نسخة الميكرو-نبضة (التقاط من الثواني الأولى)
+Smart Money & Second-Candle Ignition Sniper (M2 Precision Edition)
+رادار الشرارة الأولى - نسخة الشمعة الثانية (التقاط دقيق في التوقيت المثالي)
 """
 
 import asyncio
@@ -16,13 +16,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# إعدادات الشرارة الأولى (التركيز على شمعة الـ 5 دقائق الأولى)
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 400))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 200))
-MIN_M5_CHANGE = float(os.environ.get("MIN_M5_CHANGE", 6.0))  # تغير الـ 5 دقائق (الشرارة البكر)
-MAX_M5_CHANGE = float(os.environ.get("MAX_M5_CHANGE", 80.0)) # منع العملات التي احترقت وانتهت
+# إعدادات الشمعة الثانية والدقيقة الأولى-الثانية
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 300))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 150))
+MIN_TARGET_CHANGE = float(os.environ.get("MIN_TARGET_CHANGE", 4.0))  # تغير سريع ومؤكد في الشمعة الثانية
+MAX_TARGET_CHANGE = float(os.environ.get("MAX_TARGET_CHANGE", 75.0))  
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 3.0))  # فحص أسرع كل 3 ثوانٍ
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 2.0))     # فحص فائق السرعة كل ثانيتين
 MAX_ALERTS_STORED = 100
 ALERT_COOLDOWN_SECONDS = 900
 
@@ -35,7 +35,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7",
 }
 
-app = FastAPI(title="First-Second Ignition Sniper")
+app = FastAPI(title="Second-Candle Ignition Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -132,12 +132,15 @@ def analyze_and_push(pair):
         if h1_vol < MIN_VOLUME_USD:
             return
 
-        # التركيز الخاطف على تغير الـ 5 دقائق الأولى (الشرارة البكر)
+        # التركيز على نطاق الشمعة الثانية (m1 مع m5 لتأكيد الزخم بدقة الشمعة الثانية)
         price_change = pair.get("priceChange", {})
+        m1_change = float(price_change.get("m1", 0) or 0)
         m5_change = float(price_change.get("m5", 0) or 0)
-        h1_change = float(price_change.get("h1", 0) or 0)
+        
+        # المعادلة هنا تلتقط العملة التي بدأ عزمها يتأكد في الشمعة الثانية (مجموع أو تسارع الحركة الأولى والثانية)
+        target_score = m1_change if m1_change > 0 else (m5_change / 3.0)
 
-        if not (MIN_M5_CHANGE <= m5_change <= MAX_M5_CHANGE):
+        if not (MIN_TARGET_CHANGE <= target_score <= MAX_TARGET_CHANGE):
             return
 
         now = time.time()
@@ -158,19 +161,18 @@ def analyze_and_push(pair):
             "price": price,
             "liquidity": liq_usd,
             "volume": h1_vol,
-            "m5_change": m5_change,
-            "h1_change": h1_change,
+            "change_val": round(target_score, 1),
             "url": pair_url,
-            "strength": float(m5_change * h1_vol)
+            "strength": float(target_score * h1_vol)
         }
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        # رسالة تيليجرام تفصيلية للشرارة البكر
-        msg = "⚡ *الشرارة الأولى (لحظة الانطلاق البكر)!* [" + chain_id + "]\n"
+        # رسالة تيليجرام دقيقة للشمعة الثانية
+        msg = "⚡ *الشرارة الأولى (تأكيد الشمعة الثانية)!* [" + chain_id + "]\n"
         msg += "العملة: *" + symbol + "* (" + name + ")\n"
         msg += "العقد: `" + token_address + "`\n"
-        msg += "🔥 تغير 5 دقائق: *+" + f"{m5_change:.1f}" + "%* (انفجار فوري)\n"
+        msg += "🎯 مؤشر الشمعة الثانية: *+" + f"{target_score:.1f}" + "%* (دخول مؤكد)\n"
         msg += "السيولة: $" + f"{liq_usd:,.0f}" + " \vert{} الحجم: $" + f"{h1_vol:,.0f}" + "\n"
         msg += pair_url
         
@@ -215,31 +217,31 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>First-Second Ignition Sniper</title>
+    <title>Second-Candle Ignition Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
         h1 { margin: 0; color: #58a6ff; font-size: 22px; }
         .stats { background: #161b22; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; font-size: 14px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #f85149; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #a371f7; }
         .info { display: flex; flex-direction: column; gap: 5px; max-width: 75%; }
-        .symbol { font-size: 18px; font-weight: bold; color: #ff7b72; }
+        .symbol { font-size: 18px; font-weight: bold; color: #d2a8ff; }
         .address { font-size: 12px; color: #8b949e; font-family: monospace; word-break: break-all; }
-        .meta { font-size: 13px; color: #d2a8ff; display: flex; gap: 15px; flex-wrap: wrap; }
-        .btn { background: #da3633; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
-        .btn:hover { background: #f85149; }
+        .meta { font-size: 13px; color: #8b949e; display: flex; gap: 15px; flex-wrap: wrap; }
+        .btn { background: #8957e5; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
+        .btn:hover { background: #a371f7; }
         .chain-tag { background: #1f6feb; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; display: inline-block; margin-right: 5px; }
-        .ignition { color: #ff7b72; font-weight: bold; font-size: 15px; }
+        .ignition { color: #d2a8ff; font-weight: bold; font-size: 15px; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى (التقاط من اللحظة الأولى m5)</h1>
+        <h1>⚡ رادار الشرارة الأولى (توقيت الشمعة الثانية المؤكدة)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يراقب الشموع بدقة فائقة... بانتظار الشرارة الأولى.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يراقب توقيت الشمعة الثانية... بانتظار الانطلاقة المؤكدة.</div>
     </div>
 
     <script>
@@ -256,7 +258,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار متصل ويراقب شرارات الـ 5 دقائق... ستظهر العملات هنا فور انفجارها.</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار متصل يراقب الزخم اللحظي بدقة الشمعة الثانية... ستظهر العملات هنا فور تأكيد الانطلاقة.</div>';
                     return;
                 }
                 
@@ -275,12 +277,12 @@ def dashboard():
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
                                     <span>الحجم: <b>$${item.volume.toLocaleString()}</b></span>
-                                    <span>تغير 5ق: <span class="ignition">+${item.m5_change}% 🔥</span></span>
+                                    <span>عزم الشمعة 2: <span class="ignition">+${item.change_val}% 🎯</span></span>
                                     <span>السعر: $${item.price}</span>
                                 </div>
                             </div>
                             <div>
-                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">قنص الشرارة 🎯</a>` : ''}
+                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">قنص الشمعة 2 🎯</a>` : ''}
                             </div>
                         </div>
                     `;
