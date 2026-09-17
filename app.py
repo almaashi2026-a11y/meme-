@@ -1,6 +1,6 @@
 """
-Smart Money & Pump Radar (Fixed F-String Edition)
-رادار الشرارة الأولى - نسخة نظيفة ومقومة بالكامل
+Smart Money & Pump Radar (Absolute Clean Edition)
+رادار الشرارة الأولى - النسخة النقية المستقرة تماماً
 """
 
 import asyncio
@@ -34,7 +34,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7",
 }
 
-app = FastAPI(title="Fixed Ignition Sniper")
+app = FastAPI(title="Clean Ignition Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -162,7 +162,14 @@ def analyze_and_push(pair):
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        msg = f"⚡ *شرارة الانطلاق الأولى!* [{chain_id}]\nالعملة: *{symbol}* ({name})\nالعقد: `{token_address}`\n🚀 تغير الساعة: *+{h1_change:.1f}%*\nالسيولة: ${liq_usd:,.0f} \vert{} الحجم: ${h1_vol:,.0f}\n{pair_url}"
+        # رسالة تيليجرام خالية من أي رموز معقدة
+        msg = "⚡ شرارة الانطلاق الأولى! [" + chain_id + "]\n"
+        msg += "العملة: *" + symbol + "* (" + name + ")\n"
+        msg += "العقد: `" + token_address + "`\n"
+        msg += "تغير الساعة: *+" + f"{h1_change:.1f}" + "%*\n"
+        msg += "السيولة: $" + f"{liq_usd:,.0f}" + " \vert{} الحجم: $" + f"{h1_vol:,.0f}" + "\n"
+        msg += pair_url
+        
         send_telegram_alert(msg)
     except Exception:
         pass
@@ -204,7 +211,7 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Fixed Ignition Sniper</title>
+    <title>Clean Ignition Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
@@ -223,7 +230,7 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى (يعمل بنجاح)</h1>
+        <h1>⚡ رادار الشرارة الأولى (يعمل بنجاح تامة)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
