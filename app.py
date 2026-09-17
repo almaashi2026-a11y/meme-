@@ -1,6 +1,6 @@
 """
-Smart Money & Pump Radar (Absolute Clean Edition)
-رادار الشرارة الأولى - النسخة النقية المستقرة تماماً
+Smart Money & First-Second Ignition Sniper (M5 Micro-Pulse Edition)
+رادار الشرارة الأولى - نسخة الميكرو-نبضة (التقاط من الثواني الأولى)
 """
 
 import asyncio
@@ -16,12 +16,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 500))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 300))
-MIN_H1_CHANGE = float(os.environ.get("MIN_H1_CHANGE", 7.0))
-MAX_H1_CHANGE = float(os.environ.get("MAX_H1_CHANGE", 60.0))
+# إعدادات الشرارة الأولى (التركيز على شمعة الـ 5 دقائق الأولى)
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 400))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 200))
+MIN_M5_CHANGE = float(os.environ.get("MIN_M5_CHANGE", 6.0))  # تغير الـ 5 دقائق (الشرارة البكر)
+MAX_M5_CHANGE = float(os.environ.get("MAX_M5_CHANGE", 80.0)) # منع العملات التي احترقت وانتهت
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 5.0))
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 3.0))  # فحص أسرع كل 3 ثوانٍ
 MAX_ALERTS_STORED = 100
 ALERT_COOLDOWN_SECONDS = 900
 
@@ -34,7 +35,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7",
 }
 
-app = FastAPI(title="Clean Ignition Sniper")
+app = FastAPI(title="First-Second Ignition Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -63,7 +64,7 @@ def fetch_safe_pairs():
         if r.status_code == 200:
             profiles = r.json()
             if isinstance(profiles, list):
-                addrs = [p.get("tokenAddress") for p in profiles[:80] if p.get("tokenAddress")]
+                addrs = [p.get("tokenAddress") for p in profiles[:90] if p.get("tokenAddress")]
                 if addrs:
                     rt = requests.get("https://api.dexscreener.com/latest/dex/tokens/" + ",".join(addrs[:30]), timeout=3)
                     if rt.status_code == 200:
@@ -78,7 +79,7 @@ def fetch_safe_pairs():
         if r2.status_code == 200:
             boosts = r2.json()
             if isinstance(boosts, list):
-                addrs_b = [b.get("tokenAddress") for b in boosts[:60] if b.get("tokenAddress")]
+                addrs_b = [b.get("tokenAddress") for b in boosts[:70] if b.get("tokenAddress")]
                 if addrs_b:
                     rb = requests.get("https://api.dexscreener.com/latest/dex/tokens/" + ",".join(addrs_b[:30]), timeout=3)
                     if rb.status_code == 200:
@@ -131,10 +132,12 @@ def analyze_and_push(pair):
         if h1_vol < MIN_VOLUME_USD:
             return
 
+        # التركيز الخاطف على تغير الـ 5 دقائق الأولى (الشرارة البكر)
         price_change = pair.get("priceChange", {})
+        m5_change = float(price_change.get("m5", 0) or 0)
         h1_change = float(price_change.get("h1", 0) or 0)
 
-        if not (MIN_H1_CHANGE <= h1_change <= MAX_H1_CHANGE):
+        if not (MIN_M5_CHANGE <= m5_change <= MAX_M5_CHANGE):
             return
 
         now = time.time()
@@ -155,18 +158,19 @@ def analyze_and_push(pair):
             "price": price,
             "liquidity": liq_usd,
             "volume": h1_vol,
+            "m5_change": m5_change,
             "h1_change": h1_change,
             "url": pair_url,
-            "strength": float(h1_change * h1_vol)
+            "strength": float(m5_change * h1_vol)
         }
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        # رسالة تيليجرام خالية من أي رموز معقدة
-        msg = "⚡ شرارة الانطلاق الأولى! [" + chain_id + "]\n"
+        # رسالة تيليجرام تفصيلية للشرارة البكر
+        msg = "⚡ *الشرارة الأولى (لحظة الانطلاق البكر)!* [" + chain_id + "]\n"
         msg += "العملة: *" + symbol + "* (" + name + ")\n"
         msg += "العقد: `" + token_address + "`\n"
-        msg += "تغير الساعة: *+" + f"{h1_change:.1f}" + "%*\n"
+        msg += "🔥 تغير 5 دقائق: *+" + f"{m5_change:.1f}" + "%* (انفجار فوري)\n"
         msg += "السيولة: $" + f"{liq_usd:,.0f}" + " \vert{} الحجم: $" + f"{h1_vol:,.0f}" + "\n"
         msg += pair_url
         
@@ -211,31 +215,31 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Clean Ignition Sniper</title>
+    <title>First-Second Ignition Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
         h1 { margin: 0; color: #58a6ff; font-size: 22px; }
         .stats { background: #161b22; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; font-size: 14px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #f0883e; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #f85149; }
         .info { display: flex; flex-direction: column; gap: 5px; max-width: 75%; }
-        .symbol { font-size: 18px; font-weight: bold; color: #f0883e; }
+        .symbol { font-size: 18px; font-weight: bold; color: #ff7b72; }
         .address { font-size: 12px; color: #8b949e; font-family: monospace; word-break: break-all; }
         .meta { font-size: 13px; color: #d2a8ff; display: flex; gap: 15px; flex-wrap: wrap; }
-        .btn { background: #9e6a03; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
-        .btn:hover { background: #bb8009; }
+        .btn { background: #da3633; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
+        .btn:hover { background: #f85149; }
         .chain-tag { background: #1f6feb; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; display: inline-block; margin-right: 5px; }
-        .ignition { color: #f0883e; font-weight: bold; font-size: 15px; }
+        .ignition { color: #ff7b72; font-weight: bold; font-size: 15px; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى (يعمل بنجاح تامة)</h1>
+        <h1>⚡ رادار الشرارة الأولى (التقاط من اللحظة الأولى m5)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل بكامل طاقته... بانتظار الشرارات المبكرة.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يراقب الشموع بدقة فائقة... بانتظار الشرارة الأولى.</div>
     </div>
 
     <script>
@@ -252,7 +256,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار متصل ويراقب السوق... ستظهر العملات المبكرة هنا فوراً.</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار متصل ويراقب شرارات الـ 5 دقائق... ستظهر العملات هنا فور انفجارها.</div>';
                     return;
                 }
                 
@@ -271,7 +275,7 @@ def dashboard():
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
                                     <span>الحجم: <b>$${item.volume.toLocaleString()}</b></span>
-                                    <span>تغير 1س: <span class="ignition">+${item.h1_change}% ⚡</span></span>
+                                    <span>تغير 5ق: <span class="ignition">+${item.m5_change}% 🔥</span></span>
                                     <span>السعر: $${item.price}</span>
                                 </div>
                             </div>
