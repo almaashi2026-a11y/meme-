@@ -1,6 +1,6 @@
 """
-Real-Time Instant First-Tick Sniper (Direct Token Stream Edition)
-رادار الشرارة الأولى الفوري - تدفق مباشر للتوكنات الطازجة بدون انتظار
+Direct Stream & Fallback Sniper (Guaranteed Feed Edition)
+رادار التدفق المباشر والمضمون - للقضاء على الأصفار وظهور العملات فوراً
 """
 
 import asyncio
@@ -16,26 +16,24 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط مرنة وسريعة جداً لالتقاط الشمعة الصاعدة فور ولادتها
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 20))     
-MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 0.1))             
-MAX_M1_CHANGE = float(os.environ.get("MAX_M1_CHANGE", 99.0))            
+# شروط مرنة جداً لضمان ظهور النتائج فوراً على الشاشة
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 10))     
+MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 0.0))             
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.5))            
-MAX_ALERTS_STORED = 120
-ALERT_COOLDOWN_SECONDS = 120                                         
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))            
+MAX_ALERTS_STORED = 100
+ALERT_COOLDOWN_SECONDS = 30                                         
 
-IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "ARB", "SUI", "AVAX", "MATIC", "WETH", "WBTC"}
+IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB"}
 IGNORED_TOKENS = {
     "So11111111111111111111111111111111111111112",
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-    "0xdac17f958d2ee523a2206206994597c13d831ec7",
-    "0x4200000000000000000000000000000000000006"
+    "0xdac17f958d2ee523a2206206994597c13d831ec7"
 }
 
-app = FastAPI(title="Instant First-Tick Sniper")
+app = FastAPI(title="Guaranteed Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -56,35 +54,24 @@ def send_telegram_alert(message: str):
         pass
 
 
-def fetch_instant_ignition_pairs():
+def fetch_guaranteed_pairs():
     pairs_list = []
     
-    # 1. جلب أحدث التوكنات المضافة حالياً في المنصة
-    try:
-        r = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=2)
-        if r.status_code == 200:
-            data = r.json()
-            if isinstance(data, list):
-                addrs = [item.get("tokenAddress") for item in data if item.get("tokenAddress")]
-                if addrs:
-                    chunk = ",".join(addrs[:30])
-                    r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{chunk}", timeout=2)
-                    if r_tokens.status_code == 200:
-                        p_data = r_tokens.json().get("pairs", [])
-                        if isinstance(p_data, list):
-                            pairs_list.extend(p_data)
-    except Exception:
-        pass
-
-    # 2. جلب أحدث أزواج التداول النشطة مباشرة عبر بحث عام سريع
-    search_keywords = ["solana", "base", "pump", "pepe", "ai", "doge"]
-    for kw in search_keywords:
+    # استخدام المسار الأكثر مباشرة وثباتاً في DexScreener
+    urls = [
+        "https://api.dexscreener.com/latest/dex/search?q=solana",
+        "https://api.dexscreener.com/latest/dex/search?q=base",
+        "https://api.dexscreener.com/latest/dex/search?q=pump"
+    ]
+    
+    for url in urls:
         try:
-            r2 = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={kw}", timeout=1.5)
-            if r2.status_code == 200:
-                items = r2.json().get("pairs", [])
+            r = requests.get(url, timeout=2.5)
+            if r.status_code == 200:
+                data = r.json()
+                items = data.get("pairs", [])
                 if isinstance(items, list):
-                    pairs_list.extend(items[:15])
+                    pairs_list.extend(items)
         except Exception:
             pass
 
@@ -99,13 +86,6 @@ def fetch_instant_ignition_pairs():
             if not token_address or token_address in IGNORED_TOKENS:
                 continue
             if symbol in IGNORED_SYMBOLS:
-                continue
-                
-            price_change = p.get("priceChange", {})
-            m1 = float(price_change.get("m1", 0) or 0)
-            
-            # السماح بالعملات التي تبدأ بالصعود أو في بدايات الحركة الطازجة
-            if m1 < MIN_M1_CHANGE:
                 continue
                 
             if token_address not in seen:
@@ -162,10 +142,10 @@ def analyze_and_push(pair):
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        msg = "⚡ *شرارة انطلاق فورية!* [" + chain_id + "]\n"
+        msg = "🎯 *رصد حركة سعرية جديدة!* [" + chain_id + "]\n"
         msg += "العملة: *" + symbol + "* (" + name + ")\n"
         msg += "العقد: `" + token_address + "`\n"
-        msg += "تغير الدقيقة الأولى: `+" + f"{m1_change:.2f}" + "%` | السيولة: $" + f"{liq_usd:,.0f}" + "\n"
+        msg += "تغير m1: `+" + f"{m1_change:.2f}" + "%` | السيولة: $" + f"{liq_usd:,.0f}" + "\n"
         msg += pair_url
         
         send_telegram_alert(msg)
@@ -176,10 +156,10 @@ def analyze_and_push(pair):
 async def scanner_loop():
     while True:
         try:
-            pairs = await asyncio.to_thread(fetch_instant_ignition_pairs)
+            pairs = await asyncio.to_thread(fetch_guaranteed_pairs)
+            stats["scanned_tokens"] = len(pairs)
             if pairs:
                 for p in pairs:
-                    stats["scanned_tokens"] += 1
                     await asyncio.to_thread(analyze_and_push, p)
                 
             stats["last_scan"] = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -209,7 +189,7 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Instant First-Tick Sniper</title>
+    <title>Guaranteed Sniper Dashboard</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
@@ -228,12 +208,12 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى الفوري (تدفق مباشر)</h1>
+        <h1>🎯 رادار القنص المباشر (التدفق المضمون)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل بكامل طاقته... سيتم رصد الانطلاقات فوراً.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">جاري تحميل البيانات الحية...</div>
     </div>
 
     <script>
@@ -244,13 +224,13 @@ def dashboard():
                 
                 let stats = data.stats;
                 document.getElementById('statsBox').innerHTML = 
-                    `المفحوصة: <b>${stats.scanned_tokens}</b> | الشرارات: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
+                    `المفحوصة: <b>${stats.scanned_tokens}</b> | الصفقات: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
                 
                 let alerts = data.alerts;
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار رصد أول عملة تنطلق الآن...</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">جاري جلب الأزواج ورصد الحركة الفورية...</div>';
                     return;
                 }
                 
@@ -273,7 +253,7 @@ def dashboard():
                                 </div>
                             </div>
                             <div>
-                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">قنص الانطلاقة 🎯</a>` : ''}
+                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">قنص الصفقة 🎯</a>` : ''}
                             </div>
                         </div>
                     `;
