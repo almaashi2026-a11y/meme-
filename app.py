@@ -1,6 +1,6 @@
 """
-Smart Money & Second-Candle Ignition Sniper (M2 Precision Edition)
-رادار الشرارة الأولى - نسخة الشمعة الثانية (التقاط دقيق في التوقيت المثالي)
+Smart Money & First-Tick Ignition Sniper (Real-time Chronological Edition)
+رادار الشرارة الأولى - مرتب حسب الوقت والأحدث أولاً
 """
 
 import asyncio
@@ -16,13 +16,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# إعدادات الشمعة الثانية والدقيقة الأولى-الثانية
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 300))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 150))
-MIN_TARGET_CHANGE = float(os.environ.get("MIN_TARGET_CHANGE", 4.0))  # تغير سريع ومؤكد في الشمعة الثانية
-MAX_TARGET_CHANGE = float(os.environ.get("MAX_TARGET_CHANGE", 75.0))  
+# إعدادات الانفجار الفوري في الثواني الأولى
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 250))
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 100))
+MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 2.0))   
+MAX_M1_CHANGE = float(os.environ.get("MAX_M1_CHANGE", 90.0))  
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 2.0))     # فحص فائق السرعة كل ثانيتين
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.5))     
 MAX_ALERTS_STORED = 100
 ALERT_COOLDOWN_SECONDS = 900
 
@@ -35,7 +35,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7",
 }
 
-app = FastAPI(title="Second-Candle Ignition Sniper")
+app = FastAPI(title="Chronological Instant Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -132,15 +132,10 @@ def analyze_and_push(pair):
         if h1_vol < MIN_VOLUME_USD:
             return
 
-        # التركيز على نطاق الشمعة الثانية (m1 مع m5 لتأكيد الزخم بدقة الشمعة الثانية)
         price_change = pair.get("priceChange", {})
         m1_change = float(price_change.get("m1", 0) or 0)
-        m5_change = float(price_change.get("m5", 0) or 0)
-        
-        # المعادلة هنا تلتقط العملة التي بدأ عزمها يتأكد في الشمعة الثانية (مجموع أو تسارع الحركة الأولى والثانية)
-        target_score = m1_change if m1_change > 0 else (m5_change / 3.0)
 
-        if not (MIN_TARGET_CHANGE <= target_score <= MAX_TARGET_CHANGE):
+        if not (MIN_M1_CHANGE <= m1_change <= MAX_M1_CHANGE):
             return
 
         now = time.time()
@@ -153,6 +148,7 @@ def analyze_and_push(pair):
         pair_url = str(pair.get("url", ""))
 
         entry = {
+            "timestamp": now,  # حقل زمني دقيق للترتيب
             "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
             "chain": chain_id,
             "symbol": symbol,
@@ -161,18 +157,18 @@ def analyze_and_push(pair):
             "price": price,
             "liquidity": liq_usd,
             "volume": h1_vol,
-            "change_val": round(target_score, 1),
-            "url": pair_url,
-            "strength": float(target_score * h1_vol)
+            "m1_change": m1_change,
+            "url": pair_url
         }
+        
+        # إدراج العنصر الجديد في البداية ليكون الأحدث دائماً في الصدارة
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        # رسالة تيليجرام دقيقة للشمعة الثانية
-        msg = "⚡ *الشرارة الأولى (تأكيد الشمعة الثانية)!* [" + chain_id + "]\n"
+        msg = "⚡ *الشرارة الأولى (اللحظة الأولى m1)!* [" + chain_id + "]\n"
         msg += "العملة: *" + symbol + "* (" + name + ")\n"
         msg += "العقد: `" + token_address + "`\n"
-        msg += "🎯 مؤشر الشمعة الثانية: *+" + f"{target_score:.1f}" + "%* (دخول مؤكد)\n"
+        msg += "🚀 تغير الدقيقة الأولى: *+" + f"{m1_change:.1f}" + "%* (انفجار فوري)\n"
         msg += "السيولة: $" + f"{liq_usd:,.0f}" + " \vert{} الحجم: $" + f"{h1_vol:,.0f}" + "\n"
         msg += pair_url
         
@@ -204,7 +200,8 @@ async def startup_event():
 @app.get("/api/alerts")
 def api_alerts():
     try:
-        sorted_alerts = sorted(list(alerts_feed), key=lambda x: x.get("strength", 0), reverse=True)
+        # ترتيب النتائج حصرياً حسب الوقت الأحدث أولاً (التاريخ التنازلي)
+        sorted_alerts = sorted(list(alerts_feed), key=lambda x: x.get("timestamp", 0), reverse=True)
         return JSONResponse({"alerts": sorted_alerts, "stats": stats})
     except Exception:
         return JSONResponse({"alerts": [], "stats": stats})
@@ -217,31 +214,31 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Second-Candle Ignition Sniper</title>
+    <title>Chronological Instant Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
         h1 { margin: 0; color: #58a6ff; font-size: 22px; }
         .stats { background: #161b22; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; font-size: 14px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #a371f7; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #f85149; }
         .info { display: flex; flex-direction: column; gap: 5px; max-width: 75%; }
-        .symbol { font-size: 18px; font-weight: bold; color: #d2a8ff; }
+        .symbol { font-size: 18px; font-weight: bold; color: #ff7b72; }
         .address { font-size: 12px; color: #8b949e; font-family: monospace; word-break: break-all; }
         .meta { font-size: 13px; color: #8b949e; display: flex; gap: 15px; flex-wrap: wrap; }
-        .btn { background: #8957e5; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
-        .btn:hover { background: #a371f7; }
+        .btn { background: #da3633; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
+        .btn:hover { background: #f85149; }
         .chain-tag { background: #1f6feb; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; display: inline-block; margin-right: 5px; }
-        .ignition { color: #d2a8ff; font-weight: bold; font-size: 15px; }
+        .ignition { color: #ff7b72; font-weight: bold; font-size: 15px; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى (توقيت الشمعة الثانية المؤكدة)</h1>
+        <h1>⚡ رادار الشرارة الأولى (مرتب حسب الأحدث في الصدارة)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يراقب توقيت الشمعة الثانية... بانتظار الانطلاقة المؤكدة.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل... بانتظار الانطلاقة الأولى.</div>
     </div>
 
     <script>
@@ -258,7 +255,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار متصل يراقب الزخم اللحظي بدقة الشمعة الثانية... ستظهر العملات هنا فور تأكيد الانطلاقة.</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار متصل يراقب أول ثانية من الانفجار... ستظهر العملات هنا فور تحركها.</div>';
                     return;
                 }
                 
@@ -271,18 +268,18 @@ def dashboard():
                                     <span class="chain-tag">${item.chain}</span>
                                     <span class="symbol">${item.symbol}</span> 
                                     <span style="color: #8b949e; font-size: 13px;">(${item.name})</span>
-                                    <span style="color: #8b949e; font-size: 11px; margin-right: 10px;">[وقت الرصد: ${item.time}]</span>
+                                    <span style="color: #3fb950; font-size: 12px; font-weight: bold; margin-right: 10px;">[وقت الرصد: ${item.time}]</span>
                                 </div>
                                 <div class="address">العقد: ${item.token_address}</div>
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
                                     <span>الحجم: <b>$${item.volume.toLocaleString()}</b></span>
-                                    <span>عزم الشمعة 2: <span class="ignition">+${item.change_val}% 🎯</span></span>
+                                    <span>تغير الدقيقة 1: <span class="ignition">+${item.m1_change}% ⚡</span></span>
                                     <span>السعر: $${item.price}</span>
                                 </div>
                             </div>
                             <div>
-                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">قنص الشمعة 2 🎯</a>` : ''}
+                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">قنص الشرارة 🎯</a>` : ''}
                             </div>
                         </div>
                     `;
