@@ -1,6 +1,6 @@
 """
-Smart Money & Pump Radar (First Second Ignition Edition)
-رادار صيد الشرارة الأولى - التقاط الانفجار من أول ثانية قبل القمة
+Smart Money & Pump Radar (Ultra-Stable First Second Edition)
+رادار الشرارة الأولى المستقر - حماية تامة ضد أعطال الإقلاع
 """
 
 import asyncio
@@ -16,15 +16,14 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# 🎯 التعديل الجذري: خفضنا النسبة لتبدأ من الشرارة الأولى (+7%) قبل أن تتضخم وتهبط
 MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 500))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 400))
-MIN_H1_CHANGE = float(os.environ.get("MIN_H1_CHANGE", 7.0))    # صيد العملة في أول انطلاقتها
-MAX_H1_CHANGE = float(os.environ.get("MAX_H1_CHANGE", 60.0))  # استبعاد ما صعد بجنون وأصبح خطراً (لأنها قد تهبط)
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 300))
+MIN_H1_CHANGE = float(os.environ.get("MIN_H1_CHANGE", 7.0))
+MAX_H1_CHANGE = float(os.environ.get("MAX_H1_CHANGE", 60.0))
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 3.0))
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 5.0))
 MAX_ALERTS_STORED = 100
-ALERT_COOLDOWN_SECONDS = 900  # فترة حماية أطول لعدم تكرار التنبيه لنفس العقد
+ALERT_COOLDOWN_SECONDS = 900
 
 IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "ARB", "SUI", "AVAX"}
 IGNORED_TOKENS = {
@@ -35,7 +34,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7",
 }
 
-app = FastAPI(title="First Second Ignition Sniper")
+app = FastAPI(title="Stable Ignition Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -56,138 +55,141 @@ def send_telegram_alert(message: str):
         pass
 
 
-def fetch_early_ignition_pairs():
+def fetch_safe_pairs():
     pairs_list = []
     
-    # 1. جلب أحدث الـ Token Profiles (العملات الوليدة حديثاً)
+    # جلب الـ Profiles بأمان مع حماية كاملة ضد الأخطاء
     try:
-        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=2)
+        r = requests.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=3)
         if r.status_code == 200:
             profiles = r.json()
             if isinstance(profiles, list):
-                addrs = [p.get("tokenAddress") for p in profiles[:150] if p.get("tokenAddress")]
+                addrs = [p.get("tokenAddress") for p in profiles[:80] if p.get("tokenAddress")]
                 if addrs:
-                    for i in range(0, len(addrs), 30):
-                        chunk = addrs[i:i+30]
-                        rt = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(chunk)}", timeout=2)
-                        if rt.status_code == 200:
-                            items = rt.json().get("pairs", [])
-                            if isinstance(items, list):
-                                pairs_list.extend(items)
+                    rt = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:30])}", timeout=3)
+                    if rt.status_code == 200:
+                        items = rt.json().get("pairs", [])
+                        if isinstance(items, list):
+                            pairs_list.extend(items)
     except Exception:
         pass
 
-    # 2. جلب أحدث الـ Token Boosts (بداية الزخم والاهتمام)
+    # جلب الـ Boosts بأمان
     try:
-        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=2)
+        r2 = requests.get("https://api.dexscreener.com/token-boosts/latest/v1", timeout=3)
         if r2.status_code == 200:
             boosts = r2.json()
             if isinstance(boosts, list):
-                addrs_b = [b.get("tokenAddress") for b in boosts[:100] if b.get("tokenAddress")]
+                addrs_b = [b.get("tokenAddress") for b in boosts[:60] if b.get("tokenAddress")]
                 if addrs_b:
-                    for i in range(0, len(addrs_b), 30):
-                        chunk_b = addrs_b[i:i+30]
-                        rb = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(chunk_b)}", timeout=2)
-                        if rb.status_code == 200:
-                            p_data = rb.json().get("pairs", [])
-                            if isinstance(p_data, list):
-                                pairs_list.extend(p_data)
+                    rb = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs_b[:30])}", timeout=3)
+                    if rb.status_code == 200:
+                        p_data = rb.json().get("pairs", [])
+                        if isinstance(p_data, list):
+                            pairs_list.extend(p_data)
     except Exception:
-                        pass
+        pass
 
     seen_addresses = set()
     unique = []
     for p in pairs_list:
-        base_token = p.get("baseToken", {})
-        token_address = base_token.get("address")
-        symbol = str(base_token.get("symbol", "")).upper()
-        
-        if not token_address or token_address in IGNORED_TOKENS:
-            continue
-        if symbol in IGNORED_SYMBOLS:
-            continue
+        try:
+            base_token = p.get("baseToken", {})
+            token_address = base_token.get("address")
+            symbol = str(base_token.get("symbol", "")).upper()
             
-        if token_address not in seen_addresses:
-            seen_addresses.add(token_address)
-            unique.append(p)
+            if not token_address or token_address in IGNORED_TOKENS:
+                continue
+            if symbol in IGNORED_SYMBOLS:
+                continue
+                
+            if token_address not in seen_addresses:
+                seen_addresses.add(token_address)
+                unique.append(p)
+        except Exception:
+            continue
             
     return unique
 
 
 def analyze_and_push(pair):
-    if not pair:
-        return
+    try:
+        if not pair:
+            return
 
-    chain_id = pair.get("chainId", "unknown").upper()
-    base_token = pair.get("baseToken", {})
-    token_address = base_token.get("address", "")
-    symbol = str(base_token.get("symbol", "")).upper()
-    
-    if not token_address or token_address in IGNORED_TOKENS or symbol in IGNORED_SYMBOLS:
-        return
+        chain_id = pair.get("chainId", "unknown").upper()
+        base_token = pair.get("baseToken", {})
+        token_address = base_token.get("address", "")
+        symbol = str(base_token.get("symbol", "")).upper()
+        
+        if not token_address or token_address in IGNORED_TOKENS or symbol in IGNORED_SYMBOLS:
+            return
 
-    liq_usd = float(pair.get("liquidity", {}).get("usd", 0) or 0)
-    if liq_usd < MIN_LIQUIDITY_USD:
-        return
+        liq_usd = float(pair.get("liquidity", {}).get("usd", 0) or 0)
+        if liq_usd < MIN_LIQUIDITY_USD:
+            return
 
-    h1_vol = float(pair.get("volume", {}).get("h1", 0) or 0)
-    if h1_vol < MIN_VOLUME_USD:
-        return
+        h1_vol = float(pair.get("volume", {}).get("h1", 0) or 0)
+        if h1_vol < MIN_VOLUME_USD:
+            return
 
-    price_change = pair.get("priceChange", {})
-    h1_change = float(price_change.get("h1", 0) or 0)
+        price_change = pair.get("priceChange", {})
+        h1_change = float(price_change.get("h1", 0) or 0)
 
-    # 🎯 الشرط الذكي: يجب أن تكون في نطاق الشرارة الأولى (أعلى من 7% وأقل من 60% لتجنب القمم المتضخمة)
-    if not (MIN_H1_CHANGE <= h1_change <= MAX_H1_CHANGE):
-        return
+        # الشرط الحاسم للشرارة الأولى (بين 7% و 60%)
+        if not (MIN_H1_CHANGE <= h1_change <= MAX_H1_CHANGE):
+            return
 
-    now = time.time()
-    if now - last_alert_time.get(token_address, 0) < ALERT_COOLDOWN_SECONDS:
-        return
-    last_alert_time[token_address] = now
+        now = time.time()
+        if now - last_alert_time.get(token_address, 0) < ALERT_COOLDOWN_SECONDS:
+            return
+        last_alert_time[token_address] = now
 
-    name = base_token.get("name", "Token")
-    price = pair.get("priceUsd", "?")
-    pair_url = pair.get("url", "")
-    h24_change = float(price_change.get("h24", 0) or 0)
+        name = base_token.get("name", "Token")
+        price = str(pair.get("priceUsd", "?"))
+        pair_url = str(pair.get("url", ""))
 
-    entry = {
-        "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-        "chain": chain_id,
-        "symbol": symbol,
-        "name": name,
-        "token_address": token_address,
-        "price": str(price),
-        "liquidity": liq_usd,
-        "volume": h1_vol,
-        "h1_change": h1_change,
-        "h24_change": h24_change,
-        "url": pair_url,
-        "strength": float(h1_change * h1_vol)
-    }
-    alerts_feed.appendleft(entry)
-    stats["alerts_total"] = len(alerts_feed)
+        entry = {
+            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+            "chain": chain_id,
+            "symbol": symbol,
+            "name": name,
+            "token_address": token_address,
+            "price": price,
+            "liquidity": liq_usd,
+            "volume": h1_vol,
+            "h1_change": h1_change,
+            "url": pair_url,
+            "strength": float(h1_change * h1_vol)
+        }
+        alerts_feed.appendleft(entry)
+        stats["alerts_total"] = len(alerts_feed)
 
-    msg = (
-        f"⚡ *شرارة الانطلاق الأولى!* [{chain_id}]\n"
-        f"العملة: *{symbol}* ({name})\n"
-        f"العقد: `{token_address}`\n"
-        f"🚀 تغير الساعة: *+{h1_change:.1f}%* (في البداية)\n"
-        f"السيولة: ${liq_usd:,.0f} \vert{} الحجم: ${h1_vol:,.0f}\n"
-        f"{pair_url}"
-    )
-    send_telegram_alert(msg)
+        msg = (
+            f"⚡ *شرارة الانطلاق الأولى!* [{chain_id}]\n"
+            f"العملة: *{symbol}* ({name})\n"
+            f"العقد: `{token_address}`\n"
+            f"🚀 تغير الساعة: *+{h1_change:.1f}%*\n"
+            f"السيولة: ${liq_usd:,.0f} \vert{} الحجم: ${h1_vol:,.0f}\n"
+            f"{pair_url}"
+        )
+        send_telegram_alert(msg)
+    except Exception:
+        pass
 
 
 async def scanner_loop():
     while True:
-        pairs = await asyncio.to_thread(fetch_early_ignition_pairs)
-        if pairs:
-            for p in pairs:
-                stats["scanned_tokens"] += 1
-                await asyncio.to_thread(analyze_and_push, p)
-            
-        stats["last_scan"] = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        try:
+            pairs = await asyncio.to_thread(fetch_safe_pairs)
+            if pairs:
+                for p in pairs:
+                    stats["scanned_tokens"] += 1
+                    await asyncio.to_thread(analyze_and_push, p)
+                
+            stats["last_scan"] = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        except Exception:
+            pass
         await asyncio.sleep(POLL_SECONDS)
 
 
@@ -198,8 +200,11 @@ async def startup_event():
 
 @app.get("/api/alerts")
 def api_alerts():
-    sorted_alerts = sorted(list(alerts_feed), key=lambda x: x.get("strength", 0), reverse=True)
-    return JSONResponse({"alerts": sorted_alerts, "stats": stats})
+    try:
+        sorted_alerts = sorted(list(alerts_feed), key=lambda x: x.get("strength", 0), reverse=True)
+        return JSONResponse({"alerts": sorted_alerts, "stats": stats})
+    except Exception:
+        return JSONResponse({"alerts": [], "stats": stats})
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -209,7 +214,7 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>First Second Ignition Sniper</title>
+    <title>Stable Ignition Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
@@ -228,12 +233,12 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى (صيد الانطلاقة من أول ثانية)</h1>
-        <div class="stats" id="statsBox">جاري المسح الأولي...</div>
+        <h1>⚡ رادار الشرارة الأولى (مستقر وآمن)</h1>
+        <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يبحث عن العملات مع بداية انطلاقها (بين +7% و +60%)... انتظر الشرارة.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل بكامل طاقته الآمنة... بانتظار الشرارات المبكرة.</div>
     </div>
 
     <script>
@@ -244,13 +249,13 @@ def dashboard():
                 
                 let stats = data.stats;
                 document.getElementById('statsBox').innerHTML = 
-                    `المفحوصة: <b>${stats.scanned_tokens}</b> | الشرارات المرصودة: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
+                    `المفحوصة: <b>${stats.scanned_tokens}</b> | الشرارات: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
                 
-                let alerts = data.alerts;
+                    let alerts = data.alerts;
                 let container = document.getElementById('alertsContainer');
                 
-                if (alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار جاهز ومستنفر... بانتظار أول شرارة صعود مبكرة.</div>';
+                if (!alerts || alerts.length === 0) {
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار متصل ويراقب السوق... ستظهر العملات المبكرة هنا فوراً.</div>';
                     return;
                 }
                 
@@ -268,7 +273,7 @@ def dashboard():
                                 <div class="address">العقد: ${item.token_address}</div>
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
-                                    <span>الحجم (1س): <b>$${item.volume.toLocaleString()}</b></span>
+                                    <span>الحجم: <b>$${item.volume.toLocaleString()}</b></span>
                                     <span>تغير 1س: <span class="ignition">+${item.h1_change}% ⚡</span></span>
                                     <span>السعر: $${item.price}</span>
                                 </div>
