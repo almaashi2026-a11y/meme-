@@ -1,6 +1,6 @@
 """
-Smart Money & First-Tick Ignition Sniper (Real-time Chronological Edition)
-رادار الشرارة الأولى - مرتب حسب الوقت والأحدث أولاً
+Smart Money & First-Tick Ignition Sniper (Ultra-Sensitive Edition)
+رادار الشرارة الأولى - الحساسية القصوى لالتقاط أول نبضة
 """
 
 import asyncio
@@ -16,15 +16,15 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# إعدادات الانفجار الفوري في الثواني الأولى
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 250))
-MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 100))
-MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 2.0))   
-MAX_M1_CHANGE = float(os.environ.get("MAX_M1_CHANGE", 90.0))  
+# إعدادات فائقة الحساسية لالتقاط أي شرارة أولى مبكرة جداً
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 150))   # تخفيض الحد الأدنى للسيولة للسرعة القصوى
+MIN_VOLUME_USD = float(os.environ.get("MIN_VOLUME_USD", 50))         # تخفيض حجم التداول لجلب العملات الناشئة فوراً
+MIN_M1_CHANGE = float(os.environ.get("MIN_M1_CHANGE", 1.2))          # التقاط أي حركة صعود تبدأ من +1.2% في الدقيقة الأولى
+MAX_M1_CHANGE = float(os.environ.get("MAX_M1_CHANGE", 120.0))  
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.5))     
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))            # فحص صاروخي كل ثانية واحدة
 MAX_ALERTS_STORED = 100
-ALERT_COOLDOWN_SECONDS = 900
+ALERT_COOLDOWN_SECONDS = 600                                         # تقليل وقت الهدوء لفتح المجال لتنبيهات أكثر
 
 IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "ARB", "SUI", "AVAX"}
 IGNORED_TOKENS = {
@@ -35,7 +35,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7",
 }
 
-app = FastAPI(title="Chronological Instant Sniper")
+app = FastAPI(title="Ultra-Sensitive Ignition Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -148,7 +148,7 @@ def analyze_and_push(pair):
         pair_url = str(pair.get("url", ""))
 
         entry = {
-            "timestamp": now,  # حقل زمني دقيق للترتيب
+            "timestamp": now,
             "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
             "chain": chain_id,
             "symbol": symbol,
@@ -161,14 +161,13 @@ def analyze_and_push(pair):
             "url": pair_url
         }
         
-        # إدراج العنصر الجديد في البداية ليكون الأحدث دائماً في الصدارة
         alerts_feed.appendleft(entry)
         stats["alerts_total"] = len(alerts_feed)
 
-        msg = "⚡ *الشرارة الأولى (اللحظة الأولى m1)!* [" + chain_id + "]\n"
+        msg = "⚡ *الشرارة الأولى (حساسية عالية m1)!* [" + chain_id + "]\n"
         msg += "العملة: *" + symbol + "* (" + name + ")\n"
         msg += "العقد: `" + token_address + "`\n"
-        msg += "🚀 تغير الدقيقة الأولى: *+" + f"{m1_change:.1f}" + "%* (انفجار فوري)\n"
+        msg += "🚀 تغير الدقيقة الأولى: *+" + f"{m1_change:.1f}" + "%* (انفجار مبكر)\n"
         msg += "السيولة: $" + f"{liq_usd:,.0f}" + " \vert{} الحجم: $" + f"{h1_vol:,.0f}" + "\n"
         msg += pair_url
         
@@ -200,7 +199,6 @@ async def startup_event():
 @app.get("/api/alerts")
 def api_alerts():
     try:
-        # ترتيب النتائج حصرياً حسب الوقت الأحدث أولاً (التاريخ التنازلي)
         sorted_alerts = sorted(list(alerts_feed), key=lambda x: x.get("timestamp", 0), reverse=True)
         return JSONResponse({"alerts": sorted_alerts, "stats": stats})
     except Exception:
@@ -214,7 +212,7 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Chronological Instant Sniper</title>
+    <title>Ultra-Sensitive Ignition Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
@@ -233,12 +231,12 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>⚡ رادار الشرارة الأولى (مرتب حسب الأحدث في الصدارة)</h1>
+        <h1>⚡ رادار الشرارة الأولى (الحساسية القصوى - الأحدث في الصدارة)</h1>
         <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل... بانتظار الانطلاقة الأولى.</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يعمل بالحساسية القصوى... بانتظار أول شرارة.</div>
     </div>
 
     <script>
@@ -255,7 +253,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار متصل يراقب أول ثانية من الانفجار... ستظهر العملات هنا فور تحركها.</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">الرادار متصل يراقب بدقة متناهية... ستظهر العملات هنا فور تحركها.</div>';
                     return;
                 }
                 
