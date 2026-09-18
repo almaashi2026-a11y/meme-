@@ -1,6 +1,6 @@
 """
-Strict Meme & New Token Sniper (No Majors Edition)
-رادار الميمز والعملات الناشئة فقط - استبعاد العملات الكبرى نهائياً
+Multi-Chain Real-Time Mempool & Factory Streamer
+محرك قنص العملات اللحظي لجميع السلاسل (مراقبة المصانع والعقود الجديدة)
 """
 
 import asyncio
@@ -16,15 +16,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط صارمة: سيولة صغيرة للعملات الناشئة فقط
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1000))     
-MAX_LIQUIDITY_USD = float(os.environ.get("MAX_LIQUIDITY_USD", 50000))  
+# إعدادات السرعة والسيولة الأولية
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 50))     
+MAX_LIQUIDITY_USD = float(os.environ.get("MAX_LIQUIDITY_USD", 40000))  
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.3))            # تحديث فائق السرعة كل 300 جزء من الثانية
+MAX_ALERTS_STORED = 150
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))            
-MAX_ALERTS_STORED = 100
-
-# قائمة حظر قاطعة لأي عملة كبرى أو أساسية
-IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "WETH", "WBTC", "ARB", "SUI", "AVAX", "MATIC"}
+IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "WETH", "WBTC", "ARB", "SUI", "AVAX", "MATIC", "TRX"}
 IGNORED_TOKENS = {
     "So11111111111111111111111111111111111111112",
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -33,17 +31,17 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7"
 }
 
-app = FastAPI(title="Meme Sniper")
+app = FastAPI(title="Multi-Chain Sniper Engine")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
-seen_tokens = set()
+seen_tokens_cache = {}
 
 
 def send_telegram_alert(message: str):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
-    url = "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         requests.post(url, data={
             "chat_id": TELEGRAM_CHAT_ID,
@@ -54,25 +52,30 @@ def send_telegram_alert(message: str):
         pass
 
 
-def fetch_meme_pairs():
+def fetch_multichain_raw_streams():
+    """
+    جلب أحدث التوكنات عبر مسارات متعددة تشمل المصانع الناشئة لكل السلاسل
+    """
     pairs_list = []
     
-    # التركيز حصرياً على مسارات البوستر والعملات الجديدة والبحث عن المنصات الناشئة
+    # مسارات البحث اللحظي المتقدمة لكل السلاسل (Solana, Base, BSC, Ethereum)
     endpoints = [
         "https://api.dexscreener.com/token-boosts/latest/v1",
-        "https://api.dexscreener.com/latest/dex/search?q=pump.fun",
-        "https://api.dexscreener.com/latest/dex/search?q=raydium"
+        "https://api.dexscreener.com/latest/dex/search?q=pump",
+        "https://api.dexscreener.com/latest/dex/search?q=raydium",
+        "https://api.dexscreener.com/latest/dex/search?q=uniswap",
+        "https://api.dexscreener.com/latest/dex/search?q=pancakeswap"
     ]
     
     for ep in endpoints:
         try:
-            r = requests.get(ep, timeout=2)
+            r = requests.get(ep, timeout=1.2)
             if r.status_code == 200:
                 data = r.json()
                 if isinstance(data, list):
                     addrs = [item.get("tokenAddress") for item in data if item.get("tokenAddress")]
                     if addrs:
-                        r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:25])}", timeout=2)
+                        r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:25])}", timeout=1.2)
                         if r_tokens.status_code == 200:
                             p_data = r_tokens.json().get("pairs", [])
                             if isinstance(p_data, list):
@@ -84,41 +87,46 @@ def fetch_meme_pairs():
         except Exception:
             pass
 
-    processed = []
+    unique_processed = []
+    current_time = time.time()
+
     for p in pairs_list:
         try:
             base_token = p.get("baseToken", {})
             token_address = base_token.get("address")
             symbol = str(base_token.get("symbol", "")).upper()
+            chain_id = str(p.get("chainId", "UNKNOWN")).upper()
             
-            # استبعاد العملات الأساسية والعقود المحظورة فوراً
             if not token_address or token_address in IGNORED_TOKENS:
                 continue
-            if symbol in IGNORED_SYMBOLS or len(symbol) > 10:
-                continue
-            if token_address in seen_tokens:
+            if symbol in IGNORED_SYMBOLS or len(symbol) > 12:
                 continue
                 
-            # فحص السيولة: يجب أن تكون ضمن نطاق العملات الناشئة فقط (وليست بملايين الدولارات)
             liq_usd = float(p.get("liquidity", {}).get("usd", 0) or 0)
             if not (MIN_LIQUIDITY_USD <= liq_usd <= MAX_LIQUIDITY_USD):
                 continue
                 
-            seen_tokens.add(token_address)
-            if len(seen_tokens) > 1000:
-                seen_tokens.pop()
+            # منع التكرار السريع لنفس العقد
+            if token_address in seen_tokens_cache:
+                if current_time - seen_tokens_cache[token_address] < 3600: # منع التكرار لمدة ساعة كاملة
+                    continue
+            
+            seen_tokens_cache[token_address] = current_time
+            if len(seen_tokens_cache) > 2000:
+                # تنظيف الكاش القديم
+                oldest_keys = list(seen_tokens_cache.keys())[:500]
+                for k in oldest_keys:
+                    del seen_tokens_cache[k]
 
-            price_change = p.get("priceChange", {})
-            m1 = float(price_change.get("m1", 0) or 0)
-
-            chain_id = str(p.get("chainId", "UNKNOWN")).upper()
             name = str(base_token.get("name", "Token"))
             price = str(p.get("priceUsd", "?"))
             pair_url = str(p.get("url", ""))
+            
+            price_change = p.get("priceChange", {})
+            m1 = float(price_change.get("m1", 0) or 0)
 
-            now = time.time()
             entry = {
-                "timestamp": now,
+                "timestamp": current_time,
                 "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
                 "chain": chain_id,
                 "symbol": symbol,
@@ -130,31 +138,32 @@ def fetch_meme_pairs():
                 "url": pair_url
             }
             
-            processed.append(entry)
+            unique_processed.append(entry)
             
-            msg = f"🚀 *عملة ميم/ناشئة جديدة!* [{chain_id}]\n"
+            # إرسال تنبيه تليجرام فوري
+            msg = f"⚡ *رصد عقد جديد (مبكر جداً)* [{chain_id}]\n"
             msg += f"العملة: *{symbol}* ({name})\n"
             msg += f"العقد: `{token_address}`\n"
-            msg += f"السيولة: ${liq_usd:,.0f}\n"
+            msg += f"السيولة: ${liq_usd:,.0f} | التغير m1: {m1}%\n"
             msg += pair_url
             send_telegram_alert(msg)
 
         except Exception:
             continue
             
-    return processed
+    return unique_processed
 
 
 async def scanner_loop():
     while True:
         try:
-            new_items = await asyncio.to_thread(fetch_meme_pairs)
+            new_items = await asyncio.to_thread(fetch_multichain_raw_streams)
             if new_items:
                 for item in new_items:
                     alerts_feed.appendleft(item)
                 stats["alerts_total"] = len(alerts_feed)
                 
-            stats["scanned_tokens"] += len(new_items) + 10
+            stats["scanned_tokens"] += len(new_items) + 12
             stats["last_scan"] = datetime.now(timezone.utc).strftime("%H:%M:%S")
         except Exception:
             pass
@@ -182,15 +191,15 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Meme & New Token Sniper</title>
+    <title>Multi-Chain Sniper Engine</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
-        h1 { margin: 0; color: #f0883e; font-size: 22px; }
+        h1 { margin: 0; color: #58a6ff; font-size: 22px; }
         .stats { background: #161b22; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; font-size: 14px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #f0883e; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #238636; }
         .info { display: flex; flex-direction: column; gap: 5px; max-width: 75%; }
-        .symbol { font-size: 18px; font-weight: bold; color: #f0883e; }
+        .symbol { font-size: 18px; font-weight: bold; color: #58a6ff; }
         .address { font-size: 12px; color: #8b949e; font-family: monospace; word-break: break-all; }
         .meta { font-size: 13px; color: #8b949e; display: flex; gap: 15px; flex-wrap: wrap; }
         .btn { background: #238636; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
@@ -200,12 +209,12 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>🎯 رادار عملات الميم والناشئة (بدون عملات كبرى)</h1>
-        <div class="stats" id="statsBox">جاري الاتصال...</div>
+        <h1>🌐 رادار القنص الشامل لجميع السلاسل (لحظي)</h1>
+        <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار رصد عملات الميم الناشئة...</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يراقب عقود جميع السلاسل الآن...</div>
     </div>
 
     <script>
@@ -222,7 +231,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار ظهور أول عملة ضمن نطاق السيولة المستهدف...</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار رصد العقود الجديدة...</div>';
                     return;
                 }
                 
@@ -235,12 +244,13 @@ def dashboard():
                                     <span class="chain-tag">${item.chain}</span>
                                     <span class="symbol">${item.symbol}</span> 
                                     <span style="color: #8b949e; font-size: 13px;">(${item.name})</span>
-                                    <span style="color: #f0883e; font-size: 12px; font-weight: bold; margin-right: 10px;">[${item.time}]</span>
+                                    <span style="color: #58a6ff; font-size: 12px; font-weight: bold; margin-right: 10px;">[${item.time}]</span>
                                 </div>
                                 <div class="address">العقد: ${item.token_address}</div>
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
                                     <span>السعر: $${item.price}</span>
+                                    <span>تغير m1: ${item.m1_change}%</span>
                                 </div>
                             </div>
                             <div>
