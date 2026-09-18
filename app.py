@@ -1,6 +1,6 @@
 """
-Strict Fresh-Only Sniper (Under 2 Hours Max Age)
-محرك القنص للعملات الحديثة فقط - استبعاد أي عقد مر عليه أكثر من ساعتين
+Raw Factory & Contract Sniper Streamer (Ultra-Early Detection)
+رادار التقاط العقود الخام الصافية في ثواني الولادة الأولى
 """
 
 import asyncio
@@ -16,11 +16,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 500))     
-MAX_LIQUIDITY_USD = float(os.environ.get("MAX_LIQUIDITY_USD", 50000))  
-MAX_PAIR_AGE_HOURS = float(os.environ.get("MAX_PAIR_AGE_HOURS", 2.0))   # أقصى عمر للعملة ساعتان فقط
+# سيولة أولية منخفضة جداً لالتقاط العملة وهي في مهدها
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 10))     
+MAX_LIQUIDITY_USD = float(os.environ.get("MAX_LIQUIDITY_USD", 25000))  
+MAX_PAIR_AGE_MINUTES = float(os.environ.get("MAX_PAIR_AGE_MINUTES", 15.0)) # أقصى عمر 15 دقيقة فقط
 
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))            
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.8))            
 MAX_ALERTS_STORED = 100
 
 IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "WETH", "WBTC", "ARB", "SUI", "AVAX", "MATIC", "TRX"}
@@ -32,7 +33,7 @@ IGNORED_TOKENS = {
     "0xdac17f958d2ee523a2206206994597c13d831ec7"
 }
 
-app = FastAPI(title="Fresh Sniper Engine")
+app = FastAPI(title="Raw Factory Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -53,23 +54,24 @@ def send_telegram_alert(message: str):
         pass
 
 
-def fetch_fresh_pairs_only():
+def fetch_raw_factory_tokens():
     pairs_list = []
+    # مصادر مخصصة لتتبع أحدث الأزواج والاصدارات البرمجية الجديدة كلياً
     endpoints = [
         "https://api.dexscreener.com/token-boosts/latest/v1",
-        "https://api.dexscreener.com/latest/dex/search?q=pump",
+        "https://api.dexscreener.com/latest/dex/search?q=pump.fun",
         "https://api.dexscreener.com/latest/dex/search?q=raydium"
     ]
     
     for ep in endpoints:
         try:
-            r = requests.get(ep, timeout=1.5)
+            r = requests.get(ep, timeout=1.2)
             if r.status_code == 200:
                 data = r.json()
                 if isinstance(data, list):
                     addrs = [item.get("tokenAddress") for item in data if item.get("tokenAddress")]
                     if addrs:
-                        r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:25])}", timeout=1.5)
+                        r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:30])}", timeout=1.2)
                         if r_tokens.status_code == 200:
                             p_data = r_tokens.json().get("pairs", [])
                             if isinstance(p_data, list):
@@ -101,17 +103,17 @@ def fetch_fresh_pairs_only():
             if not (MIN_LIQUIDITY_USD <= liq_usd <= MAX_LIQUIDITY_USD):
                 continue
                 
-            # الفحص الصارم لعمر العملة (يجب أن تكون جديدة تماماً خلال الساعتين الماضيتين)
+            # فحص صار جداً: العملة يجب ألا يتجاوز عمرها 15 دقيقة فقط من لحظة الإنشاء
             pair_created_at = float(p.get("pairCreatedAt", 0) or 0)
             if pair_created_at > 0:
-                age_hours = (current_time_ms - pair_created_at) / (1000 * 60 * 60)
-                if age_hours > MAX_PAIR_AGE_HOURS:
-                    continue  # استبعاد أي عملة مر عليها أكثر من ساعتين فوراً
+                age_minutes = (current_time_ms - pair_created_at) / (1000 * 60)
+                if age_minutes > MAX_PAIR_AGE_MINUTES or age_minutes < 0:
+                    continue
             else:
-                continue  # إذا لم يكن تاريخ الإنشاء متوفراً، نستبعدها لضمان عدم دخول العملات القديمة
+                continue
 
             if token_address in seen_tokens_cache:
-                if current_time - seen_tokens_cache[token_address] < 7200:
+                if current_time - seen_tokens_cache[token_address] < 14400: # منع التكرار لـ 4 ساعات
                     continue
             
             seen_tokens_cache[token_address] = current_time
@@ -119,9 +121,6 @@ def fetch_fresh_pairs_only():
             name = str(base_token.get("name", "Token"))
             price = str(p.get("priceUsd", "?"))
             pair_url = str(p.get("url", ""))
-            
-            price_change = p.get("priceChange", {})
-            m1 = float(price_change.get("m1", 0) or 0)
 
             entry = {
                 "timestamp": current_time,
@@ -132,16 +131,16 @@ def fetch_fresh_pairs_only():
                 "token_address": token_address,
                 "price": price,
                 "liquidity": liq_usd,
-                "m1_change": m1,
                 "url": pair_url
             }
             
             unique_processed.append(entry)
             
-            msg = f"🔥 *عملة حديثة جداً (خلال ساعتين)* [{chain_id}]\n"
+            # تنبيه فوري يركز على العقد لتتمكن من نسخه ودخوله عبر البوتات المساعدة
+            msg = f"🚨 *عقد جديد في مهد الولادة (<15 دقيقة)* [{chain_id}]\n"
             msg += f"العملة: *{symbol}* ({name})\n"
-            msg += f"العقد: `{token_address}`\n"
-            msg += f"السيولة: ${liq_usd:,.0f}\n"
+            msg += f"العقد للاصطياد: `{token_address}`\n"
+            msg += f"السيولة الأولية: ${liq_usd:,.0f}\n"
             msg += pair_url
             send_telegram_alert(msg)
 
@@ -154,7 +153,7 @@ def fetch_fresh_pairs_only():
 async def scanner_loop():
     while True:
         try:
-            new_items = await asyncio.to_thread(fetch_fresh_pairs_only)
+            new_items = await asyncio.to_thread(fetch_raw_factory_tokens)
             if new_items:
                 for item in new_items:
                     alerts_feed.appendleft(item)
@@ -188,16 +187,16 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Fresh Sniper Engine</title>
+    <title>Raw Factory Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
-        h1 { margin: 0; color: #3fb950; font-size: 22px; }
+        h1 { margin: 0; color: #ff7b72; font-size: 22px; }
         .stats { background: #161b22; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; font-size: 14px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #3fb950; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #ff7b72; }
         .info { display: flex; flex-direction: column; gap: 5px; max-width: 75%; }
-        .symbol { font-size: 18px; font-weight: bold; color: #3fb950; }
-        .address { font-size: 12px; color: #8b949e; font-family: monospace; word-break: break-all; }
+        .symbol { font-size: 18px; font-weight: bold; color: #ff7b72; }
+        .address { font-size: 12px; color: #8b949e; font-family: monospace; word-break: break-all; background: #0d1117; padding: 4px; border-radius: 4px; }
         .meta { font-size: 13px; color: #8b949e; display: flex; gap: 15px; flex-wrap: wrap; }
         .btn { background: #238636; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
         .btn:hover { background: #2ea043; }
@@ -206,12 +205,12 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>🌱 رادار العملات الحديثة فقط (أقل من ساعتين)</h1>
-        <div class="stats" id="statsBox">جاري الاتصال بالسيرفر...</div>
+        <h1>🚨 رادار صيد العقود الخام (أقل من 15 دقيقة)</h1>
+        <div class="stats" id="statsBox">جاري ربط السيرفر...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يفلترة العقود القديمة ويراقب الجديد فقط...</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار ولادة العقود الأولى واكتشافها فوراً...</div>
     </div>
 
     <script>
@@ -228,7 +227,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار ظهور عملة أُنشئت حديثاً...</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">جاري رقابة عقود البلوكشين للعملات الجديدة كلياً...</div>';
                     return;
                 }
                 
@@ -241,13 +240,12 @@ def dashboard():
                                     <span class="chain-tag">${item.chain}</span>
                                     <span class="symbol">${item.symbol}</span> 
                                     <span style="color: #8b949e; font-size: 13px;">(${item.name})</span>
-                                    <span style="color: #3fb950; font-size: 12px; font-weight: bold; margin-right: 10px;">[${item.time}]</span>
+                                    <span style="color: #ff7b72; font-size: 12px; font-weight: bold; margin-right: 10px;">[${item.time}]</span>
                                 </div>
                                 <div class="address">العقد: ${item.token_address}</div>
                                 <div class="meta">
-                                    <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
-                                    <span>السعر: $${item.price}</span>
-                                    <span>تغير m1: ${item.m1_change}%</span>
+                                    <span>السيولة الأولية: <b>$${item.liquidity.toLocaleString()}</b></span>
+                                    <span>السعر المبدئي: $${item.price}</span>
                                 </div>
                             </div>
                             <div>
