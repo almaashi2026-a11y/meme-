@@ -1,6 +1,6 @@
 """
-Instant Live Feed Streamer (Raw & Unfiltered Edition)
-البث المباشر الفوري - بدون شروط معقدة لتظهر العملات فوراً
+Strict Meme & New Token Sniper (No Majors Edition)
+رادار الميمز والعملات الناشئة فقط - استبعاد العملات الكبرى نهائياً
 """
 
 import asyncio
@@ -16,12 +16,24 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط مرنة جداً لضمان عدم تصفية أي عملة وظهور التدفق فورا
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1))     
+# شروط صارمة: سيولة صغيرة للعملات الناشئة فقط
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1000))     
+MAX_LIQUIDITY_USD = float(os.environ.get("MAX_LIQUIDITY_USD", 50000))  
+
 POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))            
 MAX_ALERTS_STORED = 100
 
-app = FastAPI(title="Instant Live Streamer")
+# قائمة حظر قاطعة لأي عملة كبرى أو أساسية
+IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "WETH", "WBTC", "ARB", "SUI", "AVAX", "MATIC"}
+IGNORED_TOKENS = {
+    "So11111111111111111111111111111111111111112",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    "0xdac17f958d2ee523a2206206994597c13d831ec7"
+}
+
+app = FastAPI(title="Meme Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
@@ -42,14 +54,14 @@ def send_telegram_alert(message: str):
         pass
 
 
-def fetch_raw_live_pairs():
+def fetch_meme_pairs():
     pairs_list = []
     
-    # مسارات متعددة لجلب أحدث الأزواج المتداولة مباشرة
+    # التركيز حصرياً على مسارات البوستر والعملات الجديدة والبحث عن المنصات الناشئة
     endpoints = [
-        "https://api.dexscreener.com/latest/dex/search?q=solana",
-        "https://api.dexscreener.com/latest/dex/search?q=USDC",
-        "https://api.dexscreener.com/latest/dex/search?q=ETH"
+        "https://api.dexscreener.com/token-boosts/latest/v1",
+        "https://api.dexscreener.com/latest/dex/search?q=pump.fun",
+        "https://api.dexscreener.com/latest/dex/search?q=raydium"
     ]
     
     for ep in endpoints:
@@ -57,9 +69,18 @@ def fetch_raw_live_pairs():
             r = requests.get(ep, timeout=2)
             if r.status_code == 200:
                 data = r.json()
-                items = data.get("pairs", [])
-                if isinstance(items, list):
-                    pairs_list.extend(items)
+                if isinstance(data, list):
+                    addrs = [item.get("tokenAddress") for item in data if item.get("tokenAddress")]
+                    if addrs:
+                        r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:25])}", timeout=2)
+                        if r_tokens.status_code == 200:
+                            p_data = r_tokens.json().get("pairs", [])
+                            if isinstance(p_data, list):
+                                pairs_list.extend(p_data)
+                elif isinstance(data, dict):
+                    items = data.get("pairs", [])
+                    if isinstance(items, list):
+                        pairs_list.extend(items)
         except Exception:
             pass
 
@@ -70,11 +91,17 @@ def fetch_raw_live_pairs():
             token_address = base_token.get("address")
             symbol = str(base_token.get("symbol", "")).upper()
             
-            if not token_address or token_address in seen_tokens:
+            # استبعاد العملات الأساسية والعقود المحظورة فوراً
+            if not token_address or token_address in IGNORED_TOKENS:
+                continue
+            if symbol in IGNORED_SYMBOLS or len(symbol) > 10:
+                continue
+            if token_address in seen_tokens:
                 continue
                 
+            # فحص السيولة: يجب أن تكون ضمن نطاق العملات الناشئة فقط (وليست بملايين الدولارات)
             liq_usd = float(p.get("liquidity", {}).get("usd", 0) or 0)
-            if liq_usd < MIN_LIQUIDITY_USD:
+            if not (MIN_LIQUIDITY_USD <= liq_usd <= MAX_LIQUIDITY_USD):
                 continue
                 
             seen_tokens.add(token_address)
@@ -105,11 +132,10 @@ def fetch_raw_live_pairs():
             
             processed.append(entry)
             
-            # إرسال تنبيه تليجرام للتأكد من وصولها
-            msg = f"🔔 *رصد عملة جديدة عبر البث المباشر!* [{chain_id}]\n"
+            msg = f"🚀 *عملة ميم/ناشئة جديدة!* [{chain_id}]\n"
             msg += f"العملة: *{symbol}* ({name})\n"
             msg += f"العقد: `{token_address}`\n"
-            msg += f"السيولة: ${liq_usd:,.0f} | التغير m1: {m1}%\n"
+            msg += f"السيولة: ${liq_usd:,.0f}\n"
             msg += pair_url
             send_telegram_alert(msg)
 
@@ -122,13 +148,13 @@ def fetch_raw_live_pairs():
 async def scanner_loop():
     while True:
         try:
-            new_items = await asyncio.to_thread(fetch_raw_live_pairs)
+            new_items = await asyncio.to_thread(fetch_meme_pairs)
             if new_items:
                 for item in new_items:
                     alerts_feed.appendleft(item)
                 stats["alerts_total"] = len(alerts_feed)
                 
-            stats["scanned_tokens"] += len(new_items) + 15
+            stats["scanned_tokens"] += len(new_items) + 10
             stats["last_scan"] = datetime.now(timezone.utc).strftime("%H:%M:%S")
         except Exception:
             pass
@@ -156,15 +182,15 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Instant Live Streamer</title>
+    <title>Meme & New Token Sniper</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
-        h1 { margin: 0; color: #58a6ff; font-size: 22px; }
+        h1 { margin: 0; color: #f0883e; font-size: 22px; }
         .stats { background: #161b22; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; font-size: 14px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #58a6ff; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #f0883e; }
         .info { display: flex; flex-direction: column; gap: 5px; max-width: 75%; }
-        .symbol { font-size: 18px; font-weight: bold; color: #58a6ff; }
+        .symbol { font-size: 18px; font-weight: bold; color: #f0883e; }
         .address { font-size: 12px; color: #8b949e; font-family: monospace; word-break: break-all; }
         .meta { font-size: 13px; color: #8b949e; display: flex; gap: 15px; flex-wrap: wrap; }
         .btn { background: #238636; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
@@ -174,12 +200,12 @@ def dashboard():
 </head>
 <body>
     <div class="header">
-        <h1>📡 البث المباشر الفوري (بدون فلترة معقدة)</h1>
+        <h1>🎯 رادار عملات الميم والناشئة (بدون عملات كبرى)</h1>
         <div class="stats" id="statsBox">جاري الاتصال...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">جاري جلب تدفق العملات الآن...</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار رصد عملات الميم الناشئة...</div>
     </div>
 
     <script>
@@ -196,7 +222,7 @@ def dashboard():
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار استقبال أول صفقة حية...</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار ظهور أول عملة ضمن نطاق السيولة المستهدف...</div>';
                     return;
                 }
                 
@@ -209,13 +235,12 @@ def dashboard():
                                     <span class="chain-tag">${item.chain}</span>
                                     <span class="symbol">${item.symbol}</span> 
                                     <span style="color: #8b949e; font-size: 13px;">(${item.name})</span>
-                                    <span style="color: #58a6ff; font-size: 12px; font-weight: bold; margin-right: 10px;">[${item.time}]</span>
+                                    <span style="color: #f0883e; font-size: 12px; font-weight: bold; margin-right: 10px;">[${item.time}]</span>
                                 </div>
                                 <div class="address">العقد: ${item.token_address}</div>
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
                                     <span>السعر: $${item.price}</span>
-                                    <span>تغير m1: ${item.m1_change}%</span>
                                 </div>
                             </div>
                             <div>
