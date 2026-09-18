@@ -1,6 +1,6 @@
 """
-Ultra-Fast Live Feed Sniper (No-Lag Edition)
-رادار القنص السريع فائق الحساسية - بدون أي تأخير
+Fresh Pair Ignition Sniper (Early-Stage Token Radar)
+رادار الشرارة المبكرة للعملات الناشئة - اصطياد السيولة قبل الانفجار
 """
 
 import asyncio
@@ -16,16 +16,29 @@ from fastapi.responses import HTMLResponse, JSONResponse
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# شروط فائقة المرونة لضمان ظهور أي عملة جديدة فوراً
-MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 5))     
-POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 0.5))            
-MAX_ALERTS_STORED = 100
+# شروط صارمة لاصطياد العملات المبكرة جداً
+MIN_LIQUIDITY_USD = float(os.environ.get("MIN_LIQUIDITY_USD", 1000))   # أدنى سيولة 1,000 دولار لضمان وجود عقد حقيقي
+MAX_LIQUIDITY_USD = float(os.environ.get("MAX_LIQUIDITY_USD", 80000))  # أقصى سيولة لتجنب العملات الثقيلة الكبرى
+MAX_PAIR_AGE_HOURS = float(os.environ.get("MAX_PAIR_AGE_HOURS", 2.0))  # ألا يتجاوز عمر العملة ساعتين كحد maximum
 
-app = FastAPI(title="Ultra-Fast Sniper")
+POLL_SECONDS = float(os.environ.get("POLL_SECONDS", 1.0))
+MAX_ALERTS_STORED = 100
+ALERT_COOLDOWN_SECONDS = 3600                                       
+
+IGNORED_SYMBOLS = {"SOL", "ETH", "BTC", "USDT", "USDC", "BNB", "WETH", "WBTC"}
+IGNORED_TOKENS = {
+    "So11111111111111111111111111111111111111112",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    "0xdac17f958d2ee523a2206206994597c13d831ec7"
+}
+
+app = FastAPI(title="Early-Stage Sniper")
 
 alerts_feed = deque(maxlen=MAX_ALERTS_STORED)
 stats = {"scanned_tokens": 0, "last_scan": None, "alerts_total": 0}
-seen_tokens = set()
+seen_tokens_cache = {}
 
 
 def send_telegram_alert(message: str):
@@ -42,14 +55,14 @@ def send_telegram_alert(message: str):
         pass
 
 
-def fetch_live_market_data():
+def fetch_fresh_ignition_pairs():
     pairs_list = []
     
-    # استخدام المسار الأسرع والأكثر استجابة لجلب أحدث الأزواج المتداولة
+    # استهداف مسارات البحث للعملات الجديدة والمنشأة حديثاً
     endpoints = [
-        "https://api.dexscreener.com/latest/dex/search?q=solana",
-        "https://api.dexscreener.com/latest/dex/search?q=ETH",
-        "https://api.dexscreener.com/latest/dex/search?q=USDC"
+        "https://api.dexscreener.com/token-boosts/latest/v1",
+        "https://api.dexscreener.com/latest/dex/search?q=pump",
+        "https://api.dexscreener.com/latest/dex/search?q=new"
     ]
     
     for ep in endpoints:
@@ -57,78 +70,115 @@ def fetch_live_market_data():
             r = requests.get(ep, timeout=2)
             if r.status_code == 200:
                 data = r.json()
-                items = data.get("pairs", [])
-                if isinstance(items, list):
-                    pairs_list.extend(items)
+                if isinstance(data, list):
+                    addrs = [item.get("tokenAddress") for item in data if item.get("tokenAddress")]
+                    if addrs:
+                        r_tokens = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{','.join(addrs[:25])}", timeout=2)
+                        if r_tokens.status_code == 200:
+                            p_data = r_tokens.json().get("pairs", [])
+                            if isinstance(p_data, list):
+                                pairs_list.extend(p_data)
+                elif isinstance(data, dict):
+                    items = data.get("pairs", [])
+                    if isinstance(items, list):
+                        pairs_list.extend(items)
         except Exception:
             pass
 
-    processed = []
+    unique = []
+    current_time_ms = time.time() * 1000
+
     for p in pairs_list:
         try:
             base_token = p.get("baseToken", {})
             token_address = base_token.get("address")
             symbol = str(base_token.get("symbol", "")).upper()
             
-            if not token_address or token_address in seen_tokens:
+            if not token_address or token_address in IGNORED_TOKENS:
+                continue
+            if symbol in IGNORED_SYMBOLS:
                 continue
                 
+            # فحص السيولة (يجب أن تكون ضمن نطاق العملات الناشئة وليست ضخمة)
             liq_usd = float(p.get("liquidity", {}).get("usd", 0) or 0)
-            if liq_usd < MIN_LIQUIDITY_USD:
+            if not (MIN_LIQUIDITY_USD <= liq_usd <= MAX_LIQUIDITY_USD):
                 continue
                 
-            seen_tokens.add(token_address)
-            if len(seen_tokens) > 500:
-                seen_tokens.pop() # الحفاظ على حجم الذاكرة
-
-            price_change = p.get("priceChange", {})
-            m1 = float(price_change.get("m1", 0) or 0)
-
-            chain_id = str(p.get("chainId", "UNKNOWN")).upper()
-            name = str(base_token.get("name", "Token"))
-            price = str(p.get("priceUsd", "?"))
-            pair_url = str(p.get("url", ""))
-
+            # فحص عمر العملة (حساب وقت الإنشاء بالمللي ثانية)
+            pair_created_at = float(p.get("pairCreatedAt", 0) or 0)
+            if pair_created_at > 0:
+                age_hours = (current_time_ms - pair_created_at) / (1000 * 3600)
+                if age_hours > MAX_PAIR_AGE_HOURS:
+                    continue  # استبعاد العملات القديمة
+            
             now = time.time()
-            entry = {
-                "timestamp": now,
-                "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                "chain": chain_id,
-                "symbol": symbol,
-                "name": name,
-                "token_address": token_address,
-                "price": price,
-                "liquidity": liq_usd,
-                "m1_change": m1,
-                "url": pair_url
-            }
+            if token_address in seen_tokens_cache:
+                if now - seen_tokens_cache[token_address] < ALERT_COOLDOWN_SECONDS:
+                    continue
             
-            processed.append(entry)
-            
-            # إرسال تنبيه تليجرام فوري
-            msg = f"🚀 *حركة جديدة مرصودة!* [{chain_id}]\n"
-            msg += f"العملة: *{symbol}* ({name})\n"
-            msg += f"العقد: `{token_address}`\n"
-            msg += f"التغير (m1): `+{m1:.2f}%` | السيولة: ${liq_usd:,.0f}\n"
-            msg += pair_url
-            send_telegram_alert(msg)
-
+            seen_tokens_cache[token_address] = now
+            unique.append(p)
         except Exception:
             continue
             
-    return processed
+    return unique
+
+
+def analyze_and_push(pair):
+    try:
+        if not pair:
+            return
+
+        chain_id = str(pair.get("chainId", "UNKNOWN")).upper()
+        base_token = pair.get("baseToken", {})
+        token_address = str(base_token.get("address", ""))
+        symbol = str(base_token.get("symbol", "")).upper()
+        
+        liq_usd = float(pair.get("liquidity", {}).get("usd", 0) or 0)
+        price_change = pair.get("priceChange", {})
+        m5_change = float(price_change.get("h1", price_change.get("m5", 0)) or 0)
+
+        name = str(base_token.get("name", "Token"))
+        price = str(pair.get("priceUsd", "?"))
+        pair_url = str(pair.get("url", ""))
+
+        now = time.time()
+        entry = {
+            "timestamp": now,
+            "time": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+            "chain": chain_id,
+            "symbol": symbol,
+            "name": name,
+            "token_address": token_address,
+            "price": price,
+            "liquidity": liq_usd,
+            "m5_change": m5_change,
+            "url": pair_url
+        }
+        
+        alerts_feed.appendleft(entry)
+        stats["alerts_total"] = len(alerts_feed)
+
+        msg = "🌱 *عملة ناشئة جديدة في مرحلة الانطلاق!* [" + chain_id + "]\n"
+        msg += "العملة: *" + symbol + "* (" + name + ")\n"
+        msg += "العقد: `" + token_address + "`\n"
+        msg += "السيولة الأولية: $" + f"{liq_usd:,.0f}" + "\n"
+        msg += pair_url
+        
+        send_telegram_alert(msg)
+    except Exception:
+        pass
 
 
 async def scanner_loop():
     while True:
         try:
-            new_items = await asyncio.to_thread(fetch_live_market_data)
-            if new_items:
-                for item in new_items:
-                    alerts_feed.appendleft(item)
-                stats["alerts_total"] = len(alerts_feed)
+            pairs = await asyncio.to_thread(fetch_fresh_ignition_pairs)
+            stats["scanned_tokens"] += len(pairs) + 5
+            if pairs:
+                for p in pairs:
+                    await asyncio.to_thread(analyze_and_push, p)
                 
-            stats["scanned_tokens"] += len(new_items) + 10
             stats["last_scan"] = datetime.now(timezone.utc).strftime("%H:%M:%S")
         except Exception:
             pass
@@ -156,31 +206,30 @@ def dashboard():
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Ultra-Fast Sniper</title>
+    <title>Early-Stage Token Radar</title>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: Tahoma, sans-serif; margin: 0; padding: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
         h1 { margin: 0; color: #58a6ff; font-size: 22px; }
         .stats { background: #161b22; padding: 10px 20px; border-radius: 8px; border: 1px solid #30363d; font-size: 14px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #3fb950; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-right: 4px solid #f0883e; }
         .info { display: flex; flex-direction: column; gap: 5px; max-width: 75%; }
-        .symbol { font-size: 18px; font-weight: bold; color: #3fb950; }
+        .symbol { font-size: 18px; font-weight: bold; color: #f0883e; }
         .address { font-size: 12px; color: #8b949e; font-family: monospace; word-break: break-all; }
         .meta { font-size: 13px; color: #8b949e; display: flex; gap: 15px; flex-wrap: wrap; }
         .btn { background: #238636; color: #fff; padding: 8px 15px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }
         .btn:hover { background: #2ea043; }
         .chain-tag { background: #1f6feb; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; display: inline-block; margin-right: 5px; }
-        .ignition { color: #3fb950; font-weight: bold; font-size: 15px; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🚀 الرادار السريع المباشر (بدون تأخير)</h1>
+        <h1>🌱 رادار العملات الناشئة (قبل الانفجار)</h1>
         <div class="stats" id="statsBox">جاري الاتصال...</div>
     </div>
     
     <div id="alertsContainer">
-        <div style="text-align: center; color: #8b949e; padding: 40px;">جاري التقاط الصفقات الحية الآن...</div>
+        <div style="text-align: center; color: #8b949e; padding: 40px;">الرادار يبحث عن العقود والسيولة الناشئة حديثاً...</div>
     </div>
 
     <script>
@@ -191,13 +240,13 @@ def dashboard():
                 
                 let stats = data.stats;
                 document.getElementById('statsBox').innerHTML = 
-                    `المفحوصة: <b>${stats.scanned_tokens}</b> | الصفقات: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
+                    `المفحوصة: <b>${stats.scanned_tokens}</b> | المرصودة: <b>${stats.alerts_total}</b> | آخر مسح: ${stats.last_scan || 'جارٍ...'}`;
                 
                 let alerts = data.alerts;
                 let container = document.getElementById('alertsContainer');
                 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار رصد أول صفقة صعود...</div>';
+                    container.innerHTML = '<div style="text-align: center; color: #8b949e; padding: 40px;">بانتظار ظهور أول عقد ناشئ ضمن نطاق السيولة المستهدف...</div>';
                     return;
                 }
                 
@@ -210,17 +259,16 @@ def dashboard():
                                     <span class="chain-tag">${item.chain}</span>
                                     <span class="symbol">${item.symbol}</span> 
                                     <span style="color: #8b949e; font-size: 13px;">(${item.name})</span>
-                                    <span style="color: #3fb950; font-size: 12px; font-weight: bold; margin-right: 10px;">[${item.time}]</span>
+                                    <span style="color: #f0883e; font-size: 12px; font-weight: bold; margin-right: 10px;">[${item.time}]</span>
                                 </div>
                                 <div class="address">العقد: ${item.token_address}</div>
                                 <div class="meta">
                                     <span>السيولة: <b>$${item.liquidity.toLocaleString()}</b></span>
-                                    <span>تغير m1: <span class="ignition">+${item.m1_change}% ⚡</span></span>
                                     <span>السعر: $${item.price}</span>
                                 </div>
                             </div>
                             <div>
-                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">قنص الصفقة 🎯</a>` : ''}
+                                ${item.url ? `<a href="${item.url}" target="_blank" class="btn">فحص العقد 🔍</a>` : ''}
                             </div>
                         </div>
                     `;
@@ -231,7 +279,7 @@ def dashboard():
             }
         }
         
-        setInterval(fetchAlerts, 1500);
+        setInterval(fetchAlerts, 2000);
         fetchAlerts();
     </script>
 </body>
